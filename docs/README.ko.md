@@ -176,8 +176,7 @@ run()
 src/oscilo/
 ├── __init__.py          # 공개 API(register)와 단일 인스턴스 관리
 ├── CallContext.py       # 지연 생성 호출 컨텍스트 추적 (call_id / parent_call_id / call_depth)
-├── FileWriter.py        # JSONL 출력
-├── HistoryBuffer.py     # 메모리 내 이력 버퍼
+├── HistoryBuffer.py     # 메모리 내 이력 버퍼 및 JSONL 출력
 ├── Oscilo.py            # 모니터 구현 및 atexit 저장 로직
 ├── ScopeResolver.py     # LEGB 스코프 해석 (지역/둘러싼/전역/내장)
 ├── TraceDispatcher.py   # sys.settrace 이벤트 처리
