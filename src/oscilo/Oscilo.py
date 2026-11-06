@@ -1,7 +1,6 @@
 import atexit
 import sys
 
-from .FileWriter import FileWriter
 from .HistoryBuffer import HistoryBuffer
 from .TraceDispatcher import TraceDispatcher
 
@@ -11,7 +10,6 @@ class Oscilo:
         self.fileName = fileName
         self.buffer = HistoryBuffer()
         self.dispatcher = TraceDispatcher(self.buffer)
-        self.fileWriter = FileWriter()
         self._saved = False
 
         # 수동 정리 없이도 종료 시 저장되도록 등록.
@@ -38,10 +36,4 @@ class Oscilo:
         self.dispatcher.stop()
 
     def _write_history(self):
-        history = self.buffer.getHistory()
-
-        # 기록이 없으면 파일을 만들지 않는다.
-        if not history:
-            return
-
-        self.fileWriter.write(self.fileName, history)
+        self.buffer.write(self.fileName)

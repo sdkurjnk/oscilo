@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 from oscilo.Oscilo import Oscilo
-from oscilo.FileWriter import FileWriter
+from oscilo.HistoryBuffer import HistoryBuffer
 
 INIT_EVENT = "init"
 UPDATED_EVENT = "updated"
@@ -110,20 +110,19 @@ class TestTracerExceptionIsolation(unittest.TestCase):
         self.assertEqual(healthy_last["data"], [1, 2, 3])
 
 
-class TestFileWriterExceptionIsolation(unittest.TestCase):
+class TestHistoryBufferWriteExceptionIsolation(unittest.TestCase):
     # Issue #52 (B): a single entry that can't be JSON-serialized must not
     # take the rest of the recorded history down with it.
 
     def test_unserializable_data_falls_back_to_repr(self):
-        history = [
-            {"name": "p", "data": PlainCustomObject(1), "event": "init"},
-            {"name": "p", "data": PlainCustomObject(2), "event": "updated"},
-        ]
+        buffer = HistoryBuffer()
+        buffer.append("p", 1, PlainCustomObject(1), "init")
+        buffer.append("p", 1, PlainCustomObject(2), "updated")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             filename = os.path.join(temp_dir, "repr_fallback.jsonl")
 
-            FileWriter().write(filename, history)
+            buffer.write(filename)
             lines = read_jsonl(filename)
 
         self.assertEqual(len(lines), 2)
@@ -137,16 +136,15 @@ class TestFileWriterExceptionIsolation(unittest.TestCase):
         self.assertIn("PlainCustomObject", lines[0]["data"])
 
     def test_entry_is_skipped_only_when_repr_also_fails(self):
-        history = [
-            {"name": "before", "data": 1, "event": "init"},
-            {"name": "unrepresentable", "data": RaisesOnRepr(), "event": "init"},
-            {"name": "after", "data": 2, "event": "init"},
-        ]
+        buffer = HistoryBuffer()
+        buffer.append("before", 1, 1, "init")
+        buffer.append("unrepresentable", 2, RaisesOnRepr(), "init")
+        buffer.append("after", 3, 2, "init")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             filename = os.path.join(temp_dir, "skip_unrepresentable.jsonl")
 
-            FileWriter().write(filename, history)
+            buffer.write(filename)
             lines = read_jsonl(filename)
 
         names = [entry["name"] for entry in lines]
