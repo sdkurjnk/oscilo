@@ -176,8 +176,7 @@ Unchanged values produce no record, and immutable values are skipped entirely wh
 src/oscilo/
 ├── __init__.py          # public API (register) and single-instance management
 ├── CallContext.py       # lazy call-context tracking (call_id / parent_call_id / call_depth)
-├── FileWriter.py        # JSONL output
-├── HistoryBuffer.py     # in-memory history buffer
+├── HistoryBuffer.py     # in-memory history buffer and JSONL output
 ├── Oscilo.py            # monitor implementation and atexit save logic
 ├── ScopeResolver.py     # LEGB scope resolution (local/enclosing/global/builtin)
 ├── TraceDispatcher.py   # sys.settrace event handling

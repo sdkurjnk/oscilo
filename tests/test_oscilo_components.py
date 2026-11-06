@@ -6,7 +6,6 @@ import unittest
 from unittest.mock import Mock
 
 from oscilo.Oscilo import Oscilo
-from oscilo.FileWriter import FileWriter
 from oscilo.HistoryBuffer import HistoryBuffer
 from oscilo.ScopeResolver import ScopeResolver
 
@@ -67,21 +66,19 @@ class TestVMlogComponents(unittest.TestCase):
 
         self.assertEqual(buffer.getHistory(), [])
 
-    def test_file_writer_writes_json_lines(self):
-        history = [
-            {"name": "A", "data": [1, 2, 3], "event": "init"},
-            {"name": "A", "data": [1, 2, 3, 4], "event": "updated"},
-            {"name": "A", "data": None, "event": "deleted"},
-        ]
+    def test_history_buffer_writes_json_lines(self):
+        buffer = HistoryBuffer()
+        buffer.append("A", 1, [1, 2, 3], "init", LOCAL, 1)
+        buffer.append("A", 1, [1, 2, 3, 4], "updated", LOCAL, 2)
+        buffer.append("A", 1, None, "deleted", LOCAL, 3)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             filename = os.path.join(temp_dir, "history.jsonl")
 
-            writer = FileWriter()
-            writer.write(filename, history)
+            buffer.write(filename)
             lines = read_jsonl(filename)
 
-        self.assertEqual(lines, history)
+        self.assertEqual(lines, buffer.getHistory())
 
     def test_oscilo_register_delegates_resolution_to_dispatcher(self):
         monitor = object.__new__(Oscilo)
