@@ -3,8 +3,10 @@ import sys
 import unittest
 
 from oscilo import oscilo_engine
+from oscilo.Domain import BUILTIN, ENCLOSING, GLOBAL, LOCAL, NOT_FOUND
 
-LOCAL = 0
+
+DOMAIN_TEST_VALUE = ["global"]
 
 def check_local_variable(frame, previous_reference, previous_snapshot, variable_name):
     # Ask the native engine to compare a local variable in the provided frame.
@@ -72,6 +74,85 @@ class TestVMlogEngine(unittest.TestCase):
         )
 
         self.assertIs(result, True)
+
+    def test_local_and_global_select_the_requested_scope(self):
+        # Give the local and global variables with the same name different objects.
+        DOMAIN_TEST_VALUE = ["local"]
+        frame = sys._getframe()
+        global_value = globals()["DOMAIN_TEST_VALUE"]
+
+        local_result = oscilo_engine.check_variable(
+            frame,
+            DOMAIN_TEST_VALUE,
+            DOMAIN_TEST_VALUE.copy(),
+            LOCAL,
+            "DOMAIN_TEST_VALUE",
+        )
+        global_result = oscilo_engine.check_variable(
+            frame,
+            global_value,
+            global_value.copy(),
+            GLOBAL,
+            "DOMAIN_TEST_VALUE",
+        )
+
+        # Each scope contains the same object as its previous reference,
+        # so the result should be False.
+        self.assertIs(local_result, False)
+        self.assertIs(global_result, False)
+
+        # Passing the reference from the other scope should return True
+        # because the selected scope contains a different object.
+        self.assertIs(
+            oscilo_engine.check_variable(
+                frame,
+                global_value,
+                global_value.copy(),
+                LOCAL,
+                "DOMAIN_TEST_VALUE",
+            ),
+            True,
+        )
+        self.assertIs(
+            oscilo_engine.check_variable(
+                frame,
+                DOMAIN_TEST_VALUE,
+                DOMAIN_TEST_VALUE.copy(),
+                GLOBAL,
+                "DOMAIN_TEST_VALUE",
+            ),
+            True,
+        )
+
+    def test_enclosing_selects_free_variable_from_frame_locals(self):
+        captured = ["enclosing"]
+
+        def inner():
+            frame = sys._getframe()
+            return oscilo_engine.check_variable(
+                frame,
+                captured,
+                captured.copy(),
+                ENCLOSING,
+                "captured",
+            )
+
+        self.assertIs(inner(), False)
+
+    def test_untrackable_and_unknown_domains_return_none(self):
+        target = ["value"]
+        frame = sys._getframe()
+
+        for domain in (BUILTIN, NOT_FOUND, 999):
+            with self.subTest(domain=domain):
+                result = oscilo_engine.check_variable(
+                    frame,
+                    target,
+                    target.copy(),
+                    domain,
+                    "target",
+                )
+                self.assertIsNone(result)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

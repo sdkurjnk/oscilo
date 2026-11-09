@@ -4,10 +4,7 @@ from .CallContext import CallContextManager, is_suspended_return
 from .ScopeResolver import ScopeResolver
 from .VariableTracker import VariableTracker
 
-LOCAL = 0
-GLOBAL = 1
-ENCLOSING = 2
-BUILTIN = 3
+from .Domain import BUILTIN, ENCLOSING, GLOBAL, LOCAL
 TRACKABLE_DOMAINS = (LOCAL, GLOBAL, ENCLOSING)
 BUFFERED_EVENTS = ("init", "updated", "deleted")
 DELETED_EVENT = "deleted"
