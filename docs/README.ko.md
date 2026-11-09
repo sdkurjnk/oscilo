@@ -176,13 +176,17 @@ run()
 src/oscilo/
 ├── __init__.py          # 공개 API(register)와 단일 인스턴스 관리
 ├── CallContext.py       # 지연 생성 호출 컨텍스트 추적 (call_id / parent_call_id / call_depth)
+├── Domain.py            # C 확장에서 제공하는 Python 스코프 domain 값
 ├── HistoryBuffer.py     # 메모리 내 이력 버퍼 및 JSONL 출력
 ├── Oscilo.py            # 모니터 구현 및 atexit 저장 로직
 ├── ScopeResolver.py     # LEGB 스코프 해석 (지역/둘러싼/전역/내장)
 ├── TraceDispatcher.py   # sys.settrace 이벤트 처리
 ├── VariableTracker.py   # 변수별 변화 감지 및 값 스냅샷
-└── oscilo_engine.c      # 값 비교를 담당하는 C 확장 모듈
+└── oscilo_engine.c      # 값 비교 및 스코프 domain 정의를 담당하는 C 확장 모듈
 ```
+스코프 domain 코드는 `oscilo_engine.c`에서 정의하고 `Domain.py`를 통해
+Python에서 사용합니다. 이 정의를 변경한 뒤에는 C 확장을 다시 빌드해야 합니다.
+이 내부 코드는 위에서 설명한 JSONL의 domain 라벨을 변경하지 않습니다.
 
 ## 테스트
 
