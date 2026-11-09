@@ -60,6 +60,9 @@ jobs:
           package-dir: ${{ steps.sdist.outputs.path }}
         env:
           CIBW_BUILD: "cp311-* cp312-* cp313-*"
+          # i686 is excluded: inside the manylinux2014_i686 container on ubuntu-26.04
+          # runners, DNS resolution fails and pip cannot reach PyPI (v1.0.8 publish failure).
+          CIBW_ARCHS_LINUX: "x86_64"
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux2014
 
