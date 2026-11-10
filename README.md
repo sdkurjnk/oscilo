@@ -176,13 +176,17 @@ Unchanged values produce no record, and immutable values are skipped entirely wh
 src/oscilo/
 ├── __init__.py          # public API (register) and single-instance management
 ├── CallContext.py       # lazy call-context tracking (call_id / parent_call_id / call_depth)
+├── Domain.py            # Python scope domain values exposed by the C extension
 ├── HistoryBuffer.py     # in-memory history buffer and JSONL output
 ├── Oscilo.py            # monitor implementation and atexit save logic
 ├── ScopeResolver.py     # LEGB scope resolution (local/enclosing/global/builtin)
 ├── TraceDispatcher.py   # sys.settrace event handling
 ├── VariableTracker.py   # per-variable change detection and value snapshots
-└── oscilo_engine.c      # C extension for value comparison
+└── oscilo_engine.c      # C extension for value comparison and scope domain definitions
 ```
+Scope domain codes are defined in `oscilo_engine.c` and exposed to Python through
+`Domain.py`. The C extension must be rebuilt after changing these definitions.
+These internal codes do not change the JSONL domain labels described above.
 
 ## Testing
 

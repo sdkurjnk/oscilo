@@ -3,11 +3,7 @@ import unittest
 
 from oscilo.ScopeResolver import ScopeResolver
 
-LOCAL = 0
-GLOBAL = 1
-ENCLOSING = 2
-BUILTIN = 3
-NOT_FOUND = -1
+from oscilo.Domain import BUILTIN, ENCLOSING, GLOBAL, LOCAL, NOT_FOUND
 
 TEST_LEGB_GLOBAL = "global-value"
 

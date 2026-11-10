@@ -6,6 +6,28 @@
 
 ---
 
+## Python과 C의 domain 계약
+
+스코프 해석 결과는 Python과 C 확장이 공유하는 domain 코드로 표현한다.
+정수값의 단일 출처는 `oscilo_engine.c`의 `ScopeType` enum이며,
+C 확장이 이를 Python 상수로 노출한다. `Domain.py`의 `Domain`은
+이 값들을 참조한다.
+
+| Domain | 코드 | 의미 |
+|---|---:|---|
+| `LOCAL` | 0 | 현재 프레임의 지역 변수 |
+| `GLOBAL` | 1 | 전역 변수 |
+| `ENCLOSING` | 2 | 둘러싼 함수에서 캡처한 변수 |
+| `BUILTIN` | 3 | 내장 이름 |
+| `NOT_FOUND` | -1 | 이름을 찾지 못함 |
+
+`LOCAL`, `GLOBAL`, `ENCLOSING`만 추적한다. JSONL에서
+`ENCLOSING` 변수는 기존과 같이 `LOCAL`로 기록한다.
+
+값을 변경하거나 domain을 추가할 때는 C 확장을 다시 빌드하고,
+`tests/test_domain_protocol.py`의 계약 테스트와 관련 scope 조회 테스트를
+확인한다.
+
 ## LEGB 판정 순서
 
 `ScopeResolver.resolve()`는 **런타임 딕셔너리가 아니라 코드 객체의 정적 정보**를 먼저 본다.

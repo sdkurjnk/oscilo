@@ -1,8 +1,4 @@
-LOCAL = 0
-GLOBAL = 1
-ENCLOSING = 2
-BUILTIN = 3
-NOT_FOUND = -1
+from .Domain import BUILTIN, ENCLOSING, GLOBAL, LOCAL, NOT_FOUND
 
 
 class ScopeResolver:

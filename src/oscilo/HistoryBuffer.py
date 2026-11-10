@@ -1,11 +1,13 @@
 import copy
 import json
 
+from .Domain import ENCLOSING, GLOBAL, LOCAL
+
 class HistoryBuffer:
     _DOMAIN_LABELS = {
-        0: "LOCAL",
-        1: "GLOBAL",
-        2: "ENCLOSING",
+        LOCAL: "LOCAL",
+        GLOBAL: "GLOBAL",
+        ENCLOSING: "ENCLOSING",
     }
     _UNKNOWN_DOMAIN_LABEL = "UNKNOWN"
 
