@@ -9,9 +9,7 @@ from oscilo.Oscilo import Oscilo
 from oscilo.HistoryBuffer import HistoryBuffer
 from oscilo.ScopeResolver import ScopeResolver
 
-LOCAL = 0
-GLOBAL = 1
-NOT_FOUND = -1
+from oscilo.Domain import BUILTIN, ENCLOSING, GLOBAL, LOCAL, NOT_FOUND
 TEST_GLOBAL_VALUE = "global-value"
 
 def read_jsonl(filename):
@@ -30,6 +28,35 @@ def finalize_and_read_logs(monitor, filename):
     return read_jsonl(filename)
 
 class TestVMlogComponents(unittest.TestCase):
+
+    def test_history_buffer_domain_labels(self):
+        buffer = HistoryBuffer()
+
+        cases = [
+            (LOCAL, "LOCAL"),
+            (GLOBAL, "GLOBAL"),
+            (ENCLOSING, "ENCLOSING"),
+            (BUILTIN, "UNKNOWN"),
+            (NOT_FOUND, "UNKNOWN"),
+            (999, "UNKNOWN"),
+            (None, "UNKNOWN"),
+        ]
+
+        for domain, _ in cases:
+            buffer.append(
+                name="target",
+                var_id=1,
+                data=10,
+                event="init",
+                domain=domain,
+                line=1,
+            )
+
+        actual_labels = [entry["domain"] for entry in buffer.getHistory()]
+        expected_labels = [label for _, label in cases]
+
+        self.assertEqual(actual_labels, expected_labels)
+
     def test_history_buffer_returns_deepcopy(self):
         buffer = HistoryBuffer()
         original_data = {"numbers": [1, 2, 3]}

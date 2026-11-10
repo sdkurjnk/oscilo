@@ -1,6 +1,7 @@
 #include <Python.h>
 
 typedef enum {
+    NOT_FOUND = -1,
     LOCAL = 0,
     GLOBAL = 1,
     ENCLOSING = 2,
@@ -147,5 +148,20 @@ static struct PyModuleDef oscilomodule = {
 
 PyMODINIT_FUNC PyInit_oscilo_engine(void)
 {
-    return PyModule_Create(&oscilomodule);
+    PyObject *module = PyModule_Create(&oscilomodule);
+
+    if (module == NULL) {
+        return NULL;
+    }
+
+    if (PyModule_AddIntConstant(module, "LOCAL", LOCAL) < 0 ||
+        PyModule_AddIntConstant(module, "GLOBAL", GLOBAL) < 0 ||
+        PyModule_AddIntConstant(module, "ENCLOSING", ENCLOSING) < 0 ||
+        PyModule_AddIntConstant(module, "BUILTIN", BUILTIN) < 0 ||
+        PyModule_AddIntConstant(module, "NOT_FOUND", NOT_FOUND) < 0) {
+        Py_DECREF(module);
+        return NULL;
+    }
+
+    return module;
 }

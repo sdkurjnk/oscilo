@@ -5,12 +5,7 @@ try:
 except ImportError:
     raise RuntimeError("oscilo_engine C extension is not found.")
 
-
-LOCAL = 0
-GLOBAL = 1
-ENCLOSING = 2
-BUILTIN = 3
-NOT_FOUND = -1
+from .Domain import BUILTIN, ENCLOSING, GLOBAL, LOCAL, NOT_FOUND
 
 INIT_EVENT = "init"
 UPDATED_EVENT = "updated"
