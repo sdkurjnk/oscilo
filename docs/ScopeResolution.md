@@ -47,7 +47,7 @@ if var_name in code.co_varnames or var_name in code.co_cellvars:
     return NOT_FOUND, None
 ```
 
-파이썬의 동작과 같다. 함수 안에 그 이름에 대한 대입문이 하나라도 있으면 그 이름은 함수 전체에서 지역 변수이고, 할당 전에 접근하면 전역 값이 아니라 `UnboundLocalError`가 발생한다. 여기서 바깥 스코프로 넘어가면 이름이 같은 전역 변수의 값을 지역 변수의 값처럼 기록하게 된다. 그래서 값이 없는 구간은 `NOT_FOUND`로 둔다.
+파이썬의 동작과 같다. 함수 안에 그 이름에 대한 대입문이 하나라도 있으면 그 이름은 함수 전체에서 지역 변수가 된다. 할당 전에 접근하면 전역 값을 읽는 대신 `UnboundLocalError`가 발생한다. 여기서 바깥 스코프로 넘어가면 이름이 같은 전역 변수의 값을 지역 변수의 값처럼 기록하게 된다. 그래서 값이 없는 구간은 `NOT_FOUND`로 둔다.
 
 ## ENCLOSING의 소유권 문제
 
@@ -70,9 +70,9 @@ def outer():
 
 셀은 해시할 수 없으므로 세 곳 모두 `id(cell)`을 키로 쓴다. `id()` 값은 객체가 사라지면 다른 객체에 다시 쓰일 수 있다. 그래서 `_enclosing_cell_refs`가 셀을 강한 참조로 붙잡아 두어, 셀이 GC된 뒤 같은 주소에 다른 객체가 생겨 이력이 섞이는 일을 막는다.
 
-## 셀을 찾는 방법 : 휴리스틱
+## 셀을 찾는 방법: 휴리스틱
 
-`sys.settrace` 콜백은 프레임만 넘겨준다. 직접 확인해 보니 `frame.f_locals`, `gc.get_referents(frame)`, `PyFrame_GetVar`는 모두 셀이 가리키는 값만 돌려주고 셀 객체 자체는 주지 않았다. 셀 객체는 함수 객체의 `__closure__`를 통해서만 얻을 수 있다.
+`sys.settrace` 콜백은 프레임만 넘겨준다. 직접 확인해 보니 `frame.f_locals`, `gc.get_referents(frame)`, `PyFrame_GetVar`는 모두 셀이 가리키는 값만 돌려주고 셀 객체 자체는 주지 않았다. 셀 객체는 함수 객체의 `__closure__`로만 얻을 수 있다.
 
 그래서 `ScopeResolver.resolve_cell`은 거꾸로 호출자 프레임(`frame.f_back`)의 네임스페이스를 살펴, 다음 두 조건을 만족하는 콜러블을 찾는다.
 
