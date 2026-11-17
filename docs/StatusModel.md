@@ -70,30 +70,32 @@ global_relevant = [t for t in global_candidates
 
 ## 상태 층: tracker가 소유하는 비교 상태
 
-변수의 직전 값(비교 기준)은 **`VariableTracker._states`가 소유한다.** dispatcher는 값을 들지 않고 "이 스코프 인스턴스를 검사해"라고 key만 넘긴다.
+변수의 직전 값(비교 기준)은 `VariableTracker._states`가 소유한다. dispatcher는 값을 갖고 있지 않고, 어느 스코프 인스턴스를 검사할지 나타내는 key만 넘긴다.
 
 ```python
 def check_owned(self, frame, domain, key):
     prev_state = self._states.get(key)
     event, new_state = self.evaluate(frame, domain, self.varName, prev_state)
     if new_state is None:
-        self._states.pop(key, None)   # 삭제 이벤트
+        self._states.pop(key, None)   # deleted 또는 not_found
     else:
         self._states[key] = new_state
     return event, new_state
 ```
 
-dispatcher의 세 진입점이 도메인별로 key만 다르게 넘긴다.
+dispatcher에는 도메인별 진입점이 세 개 있고, 각 진입점은 서로 다른 key를 넘긴다.
 
 | 도메인 | 진입점 | key | 근거 |
 |---|---|---|---|
-| LOCAL | `_check_and_log_local` | `frame` | 값이 프레임(재귀 호출)마다 독립 |
-| GLOBAL | `_check_and_log_global` | `GLOBAL_STATE_KEY` | 모든 프레임이 하나의 타임라인 공유 |
-| ENCLOSING | `_check_and_log_enclosing` | `id(cell)` (미해석 시 `frame`) | 값의 소유자가 셀 |
+| LOCAL | `_check_and_log_local` | `frame` | 재귀 호출을 포함해 프레임마다 값이 따로 있음 |
+| GLOBAL | `_check_and_log_global` | `GLOBAL_STATE_KEY` | 모든 프레임이 같은 값을 공유함 |
+| ENCLOSING | `_check_and_log_enclosing` | `id(cell)` (셀을 못 찾으면 `frame`) | 값을 셀이 소유함 |
 
-한 tracker가 자기 변수의 모든 인스턴스를 `_states`에 키잉해 들고 있어 재귀 호출도 프레임별로 분리된다. dispatcher는 판정·저장에서 손을 떼고 **라우팅·로깅·식별자(var_id)** 만 담당한다.
+한 tracker가 자기 변수의 모든 인스턴스를 `_states`에 key별로 저장하므로, 재귀 호출에서도 프레임마다 상태가 따로 관리된다. dispatcher는 판정과 저장에는 관여하지 않는다. 어느 진입점으로 보낼지 정하고, 로그를 남기고, 변수 식별자(`var_id`)를 관리하는 일만 맡는다.
 
-**GLOBAL을 프레임 상태에 둘 수 없는 이유** — 전역은 어느 프레임에서 바꾸든 하나의 변수다. 프레임별로 이전 값을 들면 `foo`에서 바꾼 값이 `bar`의 기준값에 반영되지 않아 중복 기록되거나 놓친다. 그래서 GLOBAL은 `GLOBAL_STATE_KEY` 하나로 단일 타임라인을 든다. 같은 이유로 `_global_var_ids`는 이후 어느 프레임에서 변경돼도 **처음 등록된 프레임의 ID**를 유지해, 이력을 한 변수의 것으로 이어 읽게 한다.
+GLOBAL 상태를 프레임별로 두지 않는 이유도 여기에 있다. 전역 변수는 어느 프레임에서 바꾸든 같은 변수다. 프레임마다 이전 값을 따로 가지면 `foo`에서 바꾼 값이 `bar`의 기준값에 반영되지 않아, 같은 변경을 두 번 기록하거나 놓치게 된다. 그래서 GLOBAL은 `GLOBAL_STATE_KEY` 하나로 상태를 관리한다.
+
+같은 이유로 `_global_var_ids`는 나중에 다른 프레임에서 값이 바뀌어도 처음 등록한 프레임의 ID를 계속 쓴다. 덕분에 로그에서 하나의 변수 이력으로 이어서 읽을 수 있다.
 
 ---
 
