@@ -11,7 +11,7 @@ class Domain(IntEnum):
     NOT_FOUND = oscilo_engine.NOT_FOUND
 
 
-# These are for backwards compatibility with the old oscilo_engine module.
+# Keep the existing constant names available to Python modules.
 LOCAL = Domain.LOCAL
 GLOBAL = Domain.GLOBAL
 ENCLOSING = Domain.ENCLOSING
