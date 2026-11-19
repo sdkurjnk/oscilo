@@ -374,6 +374,43 @@ class TestTraceDispatcherCallContextLaziness(unittest.TestCase):
         self.assertEqual(len(observed_after[0]), 1)
 
 
+class TestTraceDispatcherGapFrameTracking(unittest.TestCase):
+    def setUp(self):
+        self.buffer = HistoryBuffer()
+        self.dispatcher = TraceDispatcher(self.buffer)
+
+    def tearDown(self):
+        self.dispatcher.stop()
+
+    def test_gap_frame_registration_restores_line_events(self):
+        # leaf()의 기록이 root()까지 context를 채우면서 gap()에 line 이벤트를 끈
+        # cleanup tracer가 붙는다. 이후 gap()이 추적 대상이 되면 line 이벤트가
+        # 다시 켜져야 중간 값(10)이 빠지지 않는다.
+        def leaf():
+            a = 1
+            self.dispatcher.register("a", frame=sys._getframe())
+            a = 2
+
+        def gap():
+            g = 0
+            leaf()
+            self.dispatcher.register("g", frame=sys._getframe())
+            g = 10
+            g = 20
+
+        def root():
+            r = 0
+            self.dispatcher.register("r", frame=sys._getframe())
+            gap()
+
+        root()
+
+        self.assertEqual(
+            events_for(self.buffer.getHistory(), "g"),
+            [("init", 0), ("updated", 10), ("updated", 20)],
+        )
+
+
 class TestTraceDispatcherCacheInvalidation(unittest.TestCase):
     def setUp(self):
         self.buffer = HistoryBuffer()
