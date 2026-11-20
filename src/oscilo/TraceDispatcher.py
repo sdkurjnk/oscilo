@@ -401,6 +401,9 @@ class TraceDispatcher:
         frame_state = {}
         self._frame_states[frame] = frame_state
         frame.f_trace = self._make_line_tracer()
+        # gap frame은 cleanup tracer가 line 이벤트를 꺼 두었을 수 있으므로 다시 켠다.
+        # 원래 값은 frame return 시 _restore_cleanup_trace()가 되돌린다.
+        frame.f_trace_lines = True
         return frame_state
 
     def _ensure_active_ancestor_tracking(self, frame, is_new_tracker):
