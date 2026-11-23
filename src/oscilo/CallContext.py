@@ -126,8 +126,7 @@ class CallContextManager:
 
         # 이미 local tracer가 있는 frame은 relevant한 frame으로 간주된다. 그
         # 정상 return 경로가 on_return()을 호출해야 하므로 그 tracer를 대체하지 않는다.
-        previous_trace = getattr(frame, "f_trace", None)
-        if previous_trace is not None:
+        if getattr(frame, "f_trace", None) is not None:
             return
 
         previous_trace_lines = getattr(
@@ -151,7 +150,6 @@ class CallContextManager:
 
         self._cleanup_traces[frame] = {
             "installed_trace": cleanup_trace,
-            "previous_trace": previous_trace,
             "previous_trace_lines": previous_trace_lines,
         }
 
@@ -166,8 +164,10 @@ class CallContextManager:
 
         installed_trace = cleanup_state["installed_trace"]
 
+        # 정리용 tracer는 f_trace가 비어 있던 frame에만 붙으므로 되돌릴 값은 None이다.
+        # 그 사이 다른 tracer로 바뀌었다면 건드리지 않는다.
         if getattr(frame, "f_trace", None) is installed_trace:
-            frame.f_trace = cleanup_state["previous_trace"]
+            frame.f_trace = None
 
         frame.f_trace_lines = cleanup_state[
             "previous_trace_lines"
