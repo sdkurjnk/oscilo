@@ -1,4 +1,5 @@
 import dis
+from dataclasses import dataclass
 
 
 _YIELD_VALUE_OPCODE = dis.opmap["YIELD_VALUE"]
@@ -23,6 +24,14 @@ def is_suspended_return(frame):
         and bytecode[offset] == _YIELD_VALUE_OPCODE
         for offset in candidate_offsets
     )
+
+
+@dataclass(frozen=True, slots=True)
+class CallContext:
+    # 이벤트가 일어난 호출 하나를 나타낸다. 만든 뒤에는 바꾸지 않는다.
+    call_id: int
+    parent_call_id: int | None
+    call_depth: int
 
 
 class CallContextManager:
@@ -107,14 +116,14 @@ class CallContextManager:
         call_depth = 1
 
         if parent_context is not None:
-            parent_call_id = parent_context["call_id"]
-            call_depth = parent_context["call_depth"] + 1
+            parent_call_id = parent_context.call_id
+            call_depth = parent_context.call_depth + 1
 
-        context = {
-            "call_id": self.next_id(),
-            "parent_call_id": parent_call_id,
-            "call_depth": call_depth,
-        }
+        context = CallContext(
+            call_id=self.next_id(),
+            parent_call_id=parent_call_id,
+            call_depth=call_depth,
+        )
 
         self._contexts[frame] = context
 

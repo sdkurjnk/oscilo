@@ -1,7 +1,9 @@
+import dataclasses
 import sys
 import unittest
 
 from oscilo.CallContext import (
+    CallContext,
     CallContextManager,
     is_suspended_return,
 )
@@ -28,10 +30,18 @@ class TestCallContextManager(unittest.TestCase):
 
         context = self.manager.ensure_context(frame)
 
-        self.assertEqual(context["call_id"], 1)
-        self.assertIsNone(context["parent_call_id"])
-        self.assertEqual(context["call_depth"], 1)
+        self.assertEqual(context.call_id, 1)
+        self.assertIsNone(context.parent_call_id)
+        self.assertEqual(context.call_depth, 1)
         self.assertIs(self.manager._contexts[frame], context)
+
+    def test_context_is_immutable_call_context(self):
+        context = self.manager.ensure_context(FakeFrame("root"))
+
+        self.assertIsInstance(context, CallContext)
+
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            context.call_id = 99
 
     def test_first_logging_frame_becomes_context_root(self):
         unrelated_parent = FakeFrame("unrelated")
@@ -42,8 +52,8 @@ class TestCallContextManager(unittest.TestCase):
 
         context = self.manager.ensure_context(frame)
 
-        self.assertEqual(context["call_depth"], 1)
-        self.assertIsNone(context["parent_call_id"])
+        self.assertEqual(context.call_depth, 1)
+        self.assertIsNone(context.parent_call_id)
         self.assertNotIn(
             unrelated_parent,
             self.manager._contexts,
@@ -69,10 +79,10 @@ class TestCallContextManager(unittest.TestCase):
         child_context = self.manager.ensure_context(child)
 
         self.assertEqual(
-            child_context["parent_call_id"],
-            parent_context["call_id"],
+            child_context.parent_call_id,
+            parent_context.call_id,
         )
-        self.assertEqual(child_context["call_depth"], 2)
+        self.assertEqual(child_context.call_depth, 2)
         self.assertIsNone(child.f_trace)
 
     def test_missing_ancestor_contexts_are_created(self):
@@ -91,16 +101,16 @@ class TestCallContextManager(unittest.TestCase):
         middle_context = self.manager._contexts[middle]
 
         self.assertEqual(
-            middle_context["parent_call_id"],
-            root_context["call_id"],
+            middle_context.parent_call_id,
+            root_context.call_id,
         )
-        self.assertEqual(middle_context["call_depth"], 2)
+        self.assertEqual(middle_context.call_depth, 2)
 
         self.assertEqual(
-            leaf_context["parent_call_id"],
-            middle_context["call_id"],
+            leaf_context.parent_call_id,
+            middle_context.call_id,
         )
-        self.assertEqual(leaf_context["call_depth"], 3)
+        self.assertEqual(leaf_context.call_depth, 3)
 
         self.assertTrue(callable(middle.f_trace))
         self.assertFalse(middle.f_trace_lines)
@@ -122,19 +132,19 @@ class TestCallContextManager(unittest.TestCase):
         right_context = self.manager.ensure_context(right)
 
         self.assertEqual(
-            left_context["parent_call_id"],
-            root_context["call_id"],
+            left_context.parent_call_id,
+            root_context.call_id,
         )
         self.assertEqual(
-            right_context["parent_call_id"],
-            root_context["call_id"],
+            right_context.parent_call_id,
+            root_context.call_id,
         )
         self.assertNotEqual(
-            left_context["call_id"],
-            right_context["call_id"],
+            left_context.call_id,
+            right_context.call_id,
         )
-        self.assertEqual(left_context["call_depth"], 2)
-        self.assertEqual(right_context["call_depth"], 2)
+        self.assertEqual(left_context.call_depth, 2)
+        self.assertEqual(right_context.call_depth, 2)
 
     def test_relevant_frame_is_removed_on_return(self):
         frame = FakeFrame("relevant")
@@ -147,8 +157,8 @@ class TestCallContextManager(unittest.TestCase):
         second_context = self.manager.ensure_context(frame)
 
         self.assertNotEqual(
-            first_context["call_id"],
-            second_context["call_id"],
+            first_context.call_id,
+            second_context.call_id,
         )
 
     def test_cleanup_trace_removes_gap_frame_on_return(self):
@@ -227,9 +237,9 @@ class TestCallContextManager(unittest.TestCase):
         new_root = FakeFrame("new-root")
         new_context = self.manager.ensure_context(new_root)
 
-        self.assertEqual(new_context["call_id"], 1)
-        self.assertIsNone(new_context["parent_call_id"])
-        self.assertEqual(new_context["call_depth"], 1)
+        self.assertEqual(new_context.call_id, 1)
+        self.assertIsNone(new_context.parent_call_id)
+        self.assertEqual(new_context.call_depth, 1)
 
     def test_none_frame_returns_none(self):
         self.assertIsNone(
