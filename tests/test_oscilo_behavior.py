@@ -406,7 +406,7 @@ class TestVMLBehavior(unittest.TestCase):
                 )
                 self.assertNotIn(
                     generator_frame,
-                    monitor.dispatcher._frame_states,
+                    monitor.dispatcher._tracked_frames,
                 )
                 self.assertNotIn(
                     generator_frame,

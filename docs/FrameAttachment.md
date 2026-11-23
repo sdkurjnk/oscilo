@@ -43,7 +43,7 @@ self._ensure_frame_tracking(frame)
 
 ### 이미 본 조상을 만나면 멈추기
 
-이미 있는 tracker를 다시 쓰는 등록, 즉 `is_new_tracker`가 `False`인 경우에는 올라가다가 `_frame_states`에 이미 들어 있는 조상을 만나면 거기서 바로 멈춘다.
+이미 있는 tracker를 다시 쓰는 등록, 즉 `is_new_tracker`가 `False`인 경우에는 올라가다가 `_tracked_frames`에 이미 들어 있는 조상을 만나면 거기서 바로 멈춘다.
 
 그 조상에는 앞선 등록에서 이미 트레이서가 붙었고, 트레이서는 line이나 return 이벤트가 올 때마다 `_relevant_for()`로 관련 tracker를 다시 걸러낸다. 따라서 그보다 위쪽은 이전 등록 때 이미 처리됐다고 볼 수 있다.
 
@@ -53,7 +53,7 @@ self._ensure_frame_tracking(frame)
 
 ## 트레이서는 모든 프레임이 함께 쓴다
 
-`_ensure_frame_tracking`은 dispatcher의 메서드인 `_trace_lines`를 프레임의 `f_trace`에 붙이고, 붙인 프레임을 `_frame_states`에 표시해 둔다. 같은 프레임에 다시 요청이 오면 이미 붙어 있으므로 아무것도 하지 않는다.
+`_ensure_frame_tracking`은 dispatcher의 메서드인 `_trace_lines`를 프레임의 `f_trace`에 붙이고, 붙인 프레임을 `_tracked_frames`에 표시해 둔다. 같은 프레임에 다시 요청이 오면 이미 붙어 있으므로 아무것도 하지 않는다.
 
 트레이서를 붙일 때 `f_trace_lines`도 `True`로 켠다. 호출 트리를 잇기 위해 만든 중간 프레임에는 [호출 컨텍스트 트리](CallContext.md)의 정리용 트레이서가 붙어 라인 이벤트가 꺼져 있다. 이런 프레임이 나중에 추적 대상이 되었을 때 트레이서만 바꾸면 `return`에서야 처음 불려서, 마지막 값만 기록되고 그 사이의 변경은 빠진다.
 
@@ -63,7 +63,7 @@ self._ensure_frame_tracking(frame)
 
 라인 트레이서는 매번 자기 자신을 돌려줘서 다음 이벤트에도 계속 불린다. `return` 이벤트가 와도 먼저 `_process_frame()`으로 값을 한 번 더 검사하므로 마지막 줄에서 일어난 변경을 놓치지 않는다.
 
-그다음 프레임이 진짜로 끝난 경우라면 `_on_frame_exit()`으로 정리를 한다. 먼저 `on_return`으로 호출 컨텍스트를 지우고, 그 프레임의 LOCAL 상태를 tracker에서 지운 뒤, `_frame_states`와 `_frame_cell_cache`에서 그 프레임을 뺀다. 마지막으로 `None`을 돌려줘서 트레이서를 뗀다. 모두 프레임을 key로 쓰는 자료구조라서 이 정리를 빼먹으면 상태가 프레임보다 오래 남아 메모리가 샌다.
+그다음 프레임이 진짜로 끝난 경우라면 `_on_frame_exit()`으로 정리를 한다. 먼저 `on_return`으로 호출 컨텍스트를 지우고, 그 프레임의 LOCAL 상태를 tracker에서 지운 뒤, `_tracked_frames`와 `_frame_cell_cache`에서 그 프레임을 뺀다. 마지막으로 `None`을 돌려줘서 트레이서를 뗀다. 모두 프레임을 key로 쓰는 자료구조라서 이 정리를 빼먹으면 상태가 프레임보다 오래 남아 메모리가 샌다.
 
 ENCLOSING 상태는 예외다. 클로저는 자기를 정의한 프레임이 끝난 뒤에도 호출될 수 있으므로, ENCLOSING 상태는 프레임이 끝나도 지우지 않고 `unregister()`나 `stop()` 때 정리한다.
 

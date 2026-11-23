@@ -52,7 +52,7 @@ class TraceDispatcher:
     def __init__(self, buffer=None):
         self._trackers = []
         self._is_tracing = False
-        self._bufferRef = buffer
+        self._buffer = buffer
         self._resolver = ScopeResolver()
         self._context_manager = CallContextManager()
         self._reset_state()
@@ -74,7 +74,7 @@ class TraceDispatcher:
         self._registered = {}
 
         # line tracer를 붙인 활성 frame들. frame return에서 제거되고 stop()에서 전체 비워진다.
-        self._frame_states = set()
+        self._tracked_frames = set()
 
         # ENCLOSING 값 이력은 tracker가 소유하고, 아래 두 dict는 dispatcher가 관리한다.
         # cell은 소유 frame return 후에도 살아야 하고(closure는 나중에 호출됨),
@@ -92,7 +92,7 @@ class TraceDispatcher:
         if domain == ENCLOSING:
             return True
 
-        # 삭제됐거나 더 이상 해석 불가능한 nonlocal이라도 frame_state가 아니라
+        # 삭제됐거나 더 이상 해석 불가능한 nonlocal이라도 frame별 상태가 아니라
         # cell-keyed 저장소에서 정리돼야 한다. 그렇지 않으면 DELETED_EVENT가
         # 엉뚱한 저장소를 조회해서 아예 발생하지 않게 된다.
         return domain not in TRACKABLE_DOMAINS and tracker.domain == ENCLOSING
@@ -265,11 +265,11 @@ class TraceDispatcher:
         self._reset_state()
         self._context_manager.clear()
 
-    def _append_buffer_event(self, varName, var_id, data, event_name, domain, line, func=None, call_id=None, parent_call_id=None, call_depth=None):
-        if self._bufferRef is None:
+    def _append_buffer_event(self, **fields):
+        if self._buffer is None:
             return
 
-        self._bufferRef.append(varName, var_id, data, event_name, domain, line, func, call_id, parent_call_id, call_depth, )
+        self._buffer.append(**fields)
 
     def _get_logged_domain(self, tracker, event_name, resolved_domain):
         # 삭제로 변수가 해석 불가해지면 이전 scope를 유지한다.
@@ -302,16 +302,16 @@ class TraceDispatcher:
             var_id = call_id
 
         self._append_buffer_event(
-            tracker.varName,
-            var_id,
-            tracker.get_snapshot(new_state),
-            event_name,
-            self._get_logged_domain(tracker, event_name, domain),
-            frame.f_lineno if frame is not None else None,
-            frame.f_code.co_name if frame is not None else None,
-            call_id,
-            context.get("parent_call_id"),
-            context.get("call_depth"),
+            name=tracker.varName,
+            var_id=var_id,
+            data=tracker.get_snapshot(new_state),
+            event=event_name,
+            domain=self._get_logged_domain(tracker, event_name, domain),
+            line=frame.f_lineno if frame is not None else None,
+            func=frame.f_code.co_name if frame is not None else None,
+            call_id=call_id,
+            parent_call_id=context.get("parent_call_id"),
+            call_depth=context.get("call_depth"),
         )
 
     def _check_and_log_global(self, frame, tracker, domain):
@@ -328,7 +328,7 @@ class TraceDispatcher:
         # 쓰는 상태를 모두 정리한다.
         self._context_manager.on_return(frame)
         self._forget_frame_local_states(frame)
-        self._frame_states.discard(frame)
+        self._tracked_frames.discard(frame)
         self._frame_cell_cache.pop(frame, None)
 
     def _forget_frame_local_states(self, frame):
@@ -407,10 +407,10 @@ class TraceDispatcher:
         return self._trace_lines
 
     def _ensure_frame_tracking(self, frame):
-        if frame in self._frame_states:
+        if frame in self._tracked_frames:
             return
 
-        self._frame_states.add(frame)
+        self._tracked_frames.add(frame)
         frame.f_trace = self._trace_lines
 
         # gap frame이었다면 CallContextManager가 line 이벤트를 꺼 둔 상태다.
@@ -420,11 +420,11 @@ class TraceDispatcher:
         current_frame = frame.f_back
 
         while current_frame is not None:
-            # dedup 등록 시 이미 _frame_states에 있는 조상을 만나면 멈춘다.
+            # dedup 등록 시 이미 _tracked_frames에 있는 조상을 만나면 멈춘다.
             # 그 조상은 이전 등록에서 f_trace가 붙었고, 라인마다 relevance를
             # 재계산하므로 그 위 체인도 처리됨이 보장된다.
             # 새 tracker면 후보가 바뀔 수 있어 조기 종료하지 않는다.
-            if not is_new_tracker and current_frame in self._frame_states:
+            if not is_new_tracker and current_frame in self._tracked_frames:
                 break
 
             local_relevant, global_relevant = self._relevant_for(

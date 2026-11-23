@@ -18,7 +18,7 @@
 
 세 층은 수명이 다르다. 등록 정보는 tracker와 함께 살고, 선별 캐시는 tracker 목록이 바뀔 때마다 버려진다. 비교 상태는 tracker가 들고 있되 프레임, 셀, 전역 같은 스코프 인스턴스 단위로 나뉘어 저장된다.
 
-`_registrations`는 tracker마다 등록 레코드(`_Registration`)를 하나씩 들고 있다. 스코프 확인뿐 아니라 로그에 찍을 전역 변수의 식별자와 정리할 셀 목록도 이 레코드에서 꺼낸다. 이 밖에 셀의 식별자를 담는 `_enclosing_var_ids`, 정리할 때 쓰는 `_enclosing_cell_refs`, `_frame_states`, `_frame_cell_cache`가 있다. 아래에서 차례로 설명한다.
+`_registrations`는 tracker마다 등록 레코드(`_Registration`)를 하나씩 들고 있다. 스코프 확인뿐 아니라 로그에 찍을 전역 변수의 식별자와 정리할 셀 목록도 이 레코드에서 꺼낸다. 이 밖에 셀의 식별자를 담는 `_enclosing_var_ids`, 정리할 때 쓰는 `_enclosing_cell_refs`, `_tracked_frames`, `_frame_cell_cache`가 있다. 아래에서 차례로 설명한다.
 
 ---
 
@@ -156,7 +156,7 @@ ENCLOSING의 셀 ID는 `CallContextManager.next_id()`로 받는다. `call_id`와
 
 없으면 `VariableTracker`와 등록 레코드를 새로 만든다. 지역 변수라면 레코드에 `code`를 채우고, 전역 변수라면 `globals_dict`를 채우고 `ensure_context(frame)`으로 받은 `call_id`를 `var_id`에 고정한다. 레코드가 다 채워지면 `_trackers`, `_registrations`, `_registered`에 차례로 넣고 `_frame_cache`를 비운다.
 
-이어서 `_start_tracing()`으로 훅을 건다. `sys.settrace(_trace_calls)`는 처음 한 번만 호출된다. 그리고 `_ensure_frame_tracking(frame)`으로 등록 프레임에 트레이서를 붙여 `_frame_states`에 표시하고, `_ensure_active_ancestor_tracking(frame, is_new_tracker)`로 `f_back`을 따라 올라가며 관련 있는 조상 프레임에도 트레이서를 붙인다. 이 탐색은 `<module>`에서 멈춘다.
+이어서 `_start_tracing()`으로 훅을 건다. `sys.settrace(_trace_calls)`는 처음 한 번만 호출된다. 그리고 `_ensure_frame_tracking(frame)`으로 등록 프레임에 트레이서를 붙여 `_tracked_frames`에 표시하고, `_ensure_active_ancestor_tracking(frame, is_new_tracker)`로 `f_back`을 따라 올라가며 관련 있는 조상 프레임에도 트레이서를 붙인다. 이 탐색은 `<module>`에서 멈춘다.
 
 마지막으로 `_check_tracker`가 도메인에 맞는 `_check_and_log_*`를 불러 `check_owned`로 현재 값을 검사한다. 처음 보는 값이므로 여기서 `init` 이벤트가 기록된다.
 
@@ -168,7 +168,7 @@ ENCLOSING의 셀 ID는 `CallContextManager.next_id()`로 받는다. `call_id`와
 
 ### 정리
 
-프레임이 진짜로 끝나면 `_on_frame_exit(frame)`가 그 프레임을 key로 쓰는 상태를 모두 정리한다. 먼저 `on_return()`으로 호출 컨텍스트를 지우고, `_forget_frame_local_states(frame)`로 지역 변수 tracker들에서 그 프레임의 상태를 지운 뒤(`tracker.forget(frame)`), `_frame_states`와 `_frame_cell_cache`에서 그 프레임을 뺀다. ENCLOSING 상태는 지우지 않는다. 클로저는 자기를 정의한 프레임이 끝난 뒤에도 호출될 수 있기 때문이다. 어느 쪽인지는 변수 이름이 `co_varnames`나 `co_cellvars`에 있는지로 가린다. 제너레이터나 코루틴이 `yield`로 멈춘 경우에는 다시 실행될 때 같은 비교 기준을 써야 하므로 아무것도 지우지 않는다.
+프레임이 진짜로 끝나면 `_on_frame_exit(frame)`가 그 프레임을 key로 쓰는 상태를 모두 정리한다. 먼저 `on_return()`으로 호출 컨텍스트를 지우고, `_forget_frame_local_states(frame)`로 지역 변수 tracker들에서 그 프레임의 상태를 지운 뒤(`tracker.forget(frame)`), `_tracked_frames`와 `_frame_cell_cache`에서 그 프레임을 뺀다. ENCLOSING 상태는 지우지 않는다. 클로저는 자기를 정의한 프레임이 끝난 뒤에도 호출될 수 있기 때문이다. 어느 쪽인지는 변수 이름이 `co_varnames`나 `co_cellvars`에 있는지로 가린다. 제너레이터나 코루틴이 `yield`로 멈춘 경우에는 다시 실행될 때 같은 비교 기준을 써야 하므로 아무것도 지우지 않는다.
 
 `unregister(tracker)`는 먼저 tracker를 `_trackers`에서 빼고 `tracker.reset()`으로 그 tracker의 `_states`를 통째로 비운다. 그다음 `_registrations`에서 등록 레코드를 꺼내고, 레코드에 적힌 `dedup_key`로 `_registered`에서 지운 뒤 `_frame_cache`를 비운다. 셀을 놓을 때 사용자 객체의 `__del__`이 실행되어 트레이스 콜백이 불릴 수 있으므로, 그 전에 캐시에서 이 tracker를 없애 두는 것이다. 이어서 레코드의 `cells`에 기록해 둔 셀 목록으로 `_enclosing_var_ids`와 `_enclosing_cell_refs`를 정리한다. 이 목록이 없으면 어느 셀이 어느 tracker의 것인지 알 수 없어서 다른 tracker의 셀까지 지우게 된다. 끝으로 남은 tracker가 없으면 `_stop_tracing()`을 부른다.
 
@@ -187,7 +187,7 @@ ENCLOSING의 셀 ID는 `CallContextManager.next_id()`로 받는다. `call_id`와
 | `_enclosing_var_ids` | `id(cell)` | 셀별 `var_id` | `unregister`, `_stop_tracing` |
 | `_enclosing_cell_refs` | `id(cell)` | 셀에 대한 강한 참조 | `unregister`, `_stop_tracing` |
 | `_frame_cache` | `id(f_code)` | code 객체, 지역 tracker 목록, 전역 후보 목록 | tracker 목록이 바뀔 때, `_stop_tracing` |
-| `_frame_states` | frame | 없음 (set) | 프레임이 진짜로 끝날 때, `_stop_tracing` |
+| `_tracked_frames` | frame | 없음 (set) | 프레임이 진짜로 끝날 때, `_stop_tracing` |
 | `_frame_cell_cache` | frame | `id(cell)` 또는 `None` | 프레임이 진짜로 끝날 때, `_stop_tracing` |
 | `VariableTracker._states` | frame, `id(cell)`, `GLOBAL_STATE_KEY` | 직전 상태 | 지역 변수는 프레임이 끝날 때 `forget`, 전체는 `unregister`나 `stop`의 `reset` |
 

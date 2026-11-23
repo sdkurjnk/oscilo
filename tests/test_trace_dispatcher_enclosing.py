@@ -205,8 +205,8 @@ class TestTraceDispatcherEnclosingIdentity(unittest.TestCase):
 class TestTraceDispatcherEnclosingAncestorEarlyExit(unittest.TestCase):
     """Covers issue #59's register() ancestor-walk early exit specifically
     for the ENCLOSING domain: closures resolve identity via
-    tracker._states/id(cell), not _frame_states, so the early-exit
-    condition (keyed off _frame_states) must have no effect on that
+    tracker._states/id(cell), not _tracked_frames, so the early-exit
+    condition (keyed off _tracked_frames) must have no effect on that
     cell-based bookkeeping while still short-circuiting the frame walk
     itself for recursive dedup registrations.
     """
@@ -248,7 +248,7 @@ class TestTraceDispatcherEnclosingAncestorEarlyExit(unittest.TestCase):
                 total += 1
                 if n < 4:
                     parent = frame.f_back
-                    self.assertIn(parent, self.dispatcher._frame_states)
+                    self.assertIn(parent, self.dispatcher._tracked_frames)
                     depths_checked.append(counts.get(id(parent), 0))
                 if n > 1:
                     inner(n - 1)
