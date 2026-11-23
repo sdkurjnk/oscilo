@@ -666,7 +666,7 @@ class TestTraceDispatcherAncestorEarlyExit(unittest.TestCase):
                 self.dispatcher.unregister(tracker1)
 
                 dedup_key = ("x", frame.f_code)
-                self.assertNotIn(dedup_key, self.dispatcher._registered_local)
+                self.assertNotIn(dedup_key, self.dispatcher._registered)
 
                 self._freeze_global_trace()
                 counts = self._count_relevant_for_calls()

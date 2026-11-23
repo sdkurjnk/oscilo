@@ -149,14 +149,14 @@ class TestTraceDispatcherEnclosingIdentity(unittest.TestCase):
         tracker = cb1()
         cb1()
 
-        self.assertIn(tracker, self.dispatcher._tracker_cells)
+        self.assertTrue(self.dispatcher._registrations[tracker].cells)
         self.assertTrue(self.dispatcher._enclosing_var_ids)
         self.assertTrue(tracker._states)
         self.assertTrue(self.dispatcher._enclosing_cell_refs)
 
         self.dispatcher.unregister(tracker)
 
-        self.assertNotIn(tracker, self.dispatcher._tracker_cells)
+        self.assertNotIn(tracker, self.dispatcher._registrations)
         self.assertEqual(self.dispatcher._enclosing_var_ids, {})
         self.assertEqual(tracker._states, {})
         self.assertEqual(self.dispatcher._enclosing_cell_refs, {})
@@ -179,7 +179,7 @@ class TestTraceDispatcherEnclosingIdentity(unittest.TestCase):
         self.assertEqual(self.dispatcher._enclosing_var_ids, {})
         self.assertEqual(self.dispatcher._enclosing_cell_refs, {})
         self.assertEqual(self.dispatcher._frame_cell_cache, {})
-        self.assertEqual(self.dispatcher._tracker_cells, {})
+        self.assertEqual(self.dispatcher._registrations, {})
 
     def test_unresolvable_cell_falls_back_to_var_id_equal_call_id(self):
         def make():

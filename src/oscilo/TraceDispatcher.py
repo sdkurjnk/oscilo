@@ -1,4 +1,5 @@
 import sys
+from dataclasses import dataclass, field
 
 from .CallContext import CallContextManager, is_suspended_return
 from .ScopeResolver import ScopeResolver
@@ -16,6 +17,32 @@ _UNRESOLVED = object()
 # tracker는 이 고정 key 하나로 자기 GLOBAL 상태를 보관한다.
 GLOBAL_STATE_KEY = object()
 
+
+@dataclass
+class _Registration:
+    # tracker 하나의 등록 정보. 등록 당시의 정확한 function/module에만
+    # 적용되도록 scope identity를 dispatcher가 보관한다.
+    dedup_key: tuple
+
+    # 지역 이름(LOCAL/ENCLOSING)으로 등록된 경우에만 채운다.
+    code: object = None
+
+    # 전역 이름으로 등록된 경우에만 채운다. globals_dict를 직접 붙잡고 있어야
+    # dedup_key에 쓴 id()가 다른 dict에 재사용되지 않는다. var_id는 다른 frame에서
+    # 변경돼도 최초 등록 frame의 ID를 유지한다.
+    globals_dict: dict = None
+    var_id: int = None
+
+    # 이 tracker가 해석한 cell key들. unregister가 자기 소유 cell만 정리하게 한다.
+    cells: set = field(default_factory=set)
+
+
+# 등록 정보가 없는 tracker를 조회했을 때 쓰는 읽기 전용 기본값.
+# unregister 도중 실행된 사용자 코드(__del__ 등)가 trace callback을 부르면
+# 캐시에 남은 tracker가 조회될 수 있는데, 이때 예외가 나면 추적이 통째로 꺼진다.
+_NO_REGISTRATION = _Registration(dedup_key=None)
+
+
 class TraceDispatcher:
     def __init__(self, buffer=None):
         self._trackers = []
@@ -27,18 +54,12 @@ class TraceDispatcher:
         # code 객체별 관련 tracker 캐시. 무관한 frame은 line tracing을 건너뛴다.
         self._frame_cache = {}
 
-        # tracker의 등록 시점 scope identity를 dispatcher가 보관한다.
-        # 등록 당시의 정확한 function/module에만 적용되게 하려는 것.
-        self._tracker_codes = {}
-        self._tracker_globals = {}
+        # tracker별 등록 정보(tracker -> _Registration).
+        self._registrations = {}
 
-        # 같은 변수/scope 재등록(예: 재귀) 시 기존 tracker를 재사용하기 위한 중복 제거 키.
-        self._registered_local = {}
-        self._registered_global = {}
-
-        # GLOBAL 값 이력은 tracker가 소유. dispatcher는 var_id만 관리하며,
-        # 다른 frame에서 변경돼도 최초 등록 frame의 ID를 유지한다.
-        self._global_var_ids = {}
+        # 같은 변수/scope 재등록(예: 재귀) 시 기존 tracker를 재사용하기 위한 중복 제거 맵.
+        # 지역은 (이름, code), 전역은 (이름, id(globals))라 key가 서로 겹치지 않는다.
+        self._registered = {}
 
         # 활성 frame 추적 마커. frame return에서 제거되고 stop()에서 전체 비워진다.
         self._frame_states = {}
@@ -54,9 +75,6 @@ class TraceDispatcher:
         # return에서 제거·stop()에서 비움. None 결과도 sentinel로 캐싱해
         # "미시도"와 "못 찾음"을 구분한다.
         self._frame_cell_cache = {}
-
-        # tracker가 해석한 cell들을 기록해, unregister가 그 tracker 소유 cell만 정리하게 한다.
-        self._tracker_cells = {}
 
     def _is_enclosing_case(self, domain, tracker):
         if domain == ENCLOSING:
@@ -106,7 +124,9 @@ class TraceDispatcher:
 
         # unregister 정리를 위해 이 tracker가 건드린 cell을 기록해 둔다.
         if cell_key is not None:
-            self._tracker_cells.setdefault(tracker, set()).add(cell_key)
+            registration = self._registrations.get(tracker)
+            if registration is not None:
+                registration.cells.add(cell_key)
 
         # cell을 해석하지 못하면(caller-frame 휴리스틱이 소유 closure를 못 찾음)
         # 기존처럼 frame별 state로 fallback한다. 변수는 계속 추적되지만
@@ -135,26 +155,26 @@ class TraceDispatcher:
 
         if is_local:
             dedup_key = (varName, code)
-            tracker = self._registered_local.get(dedup_key)
         else:
             dedup_key = (varName, id(frame.f_globals))
-            tracker = self._registered_global.get(dedup_key)
 
+        tracker = self._registered.get(dedup_key)
         is_new_tracker = tracker is None
 
         if is_new_tracker:
             tracker = VariableTracker(varName, domain=resolved_domain)
-            self._trackers.append(tracker)
+            registration = _Registration(dedup_key)
 
             if is_local:
-                self._registered_local[dedup_key] = tracker
-                self._tracker_codes[tracker] = frame.f_code
+                registration.code = code
             else:
-                self._registered_global[dedup_key] = tracker
-                self._tracker_globals[tracker] = frame.f_globals
-
                 context = self._context_manager.ensure_context(frame)
-                self._global_var_ids[tracker] = context["call_id"]
+                registration.globals_dict = frame.f_globals
+                registration.var_id = context["call_id"]
+
+            self._trackers.append(tracker)
+            self._registrations[tracker] = registration
+            self._registered[dedup_key] = tracker
 
             # 새 tracker가 추가되면 어떤 code 객체에 어떤 tracker가 적용되는지가 바뀔 수 있으므로,
             # relevance 캐시를 더 이상 신뢰할 수 없다.
@@ -187,21 +207,13 @@ class TraceDispatcher:
 
         tracker.reset()
 
-        code = self._tracker_codes.pop(tracker, None)
-        if code is not None:
-            self._registered_local.pop((tracker.varName, code), None)
+        registration = self._registrations.pop(tracker, None)
+        if registration is not None:
+            self._registered.pop(registration.dedup_key, None)
 
-        globals_dict = self._tracker_globals.pop(tracker, None)
-        if globals_dict is not None:
-            self._registered_global.pop((tracker.varName, id(globals_dict)), None)
-
-        self._global_var_ids.pop(tracker, None)
-
-        # ENCLOSING 비교 상태는 이제 tracker가 갖고 위 tracker.reset()이 버린다.
-        # 여기선 dispatcher 소유인 var_id와 cell strong-ref만 정리한다.
-        cell_keys = self._tracker_cells.pop(tracker, None)
-        if cell_keys:
-            for cell_key in cell_keys:
+            # ENCLOSING 비교 상태는 이제 tracker가 갖고 위 tracker.reset()이 버린다.
+            # 여기선 dispatcher 소유인 var_id와 cell strong-ref만 정리한다.
+            for cell_key in registration.cells:
                 self._enclosing_var_ids.pop(cell_key, None)
                 self._enclosing_cell_refs.pop(cell_key, None)
 
@@ -231,15 +243,11 @@ class TraceDispatcher:
         self._is_tracing = False
         self._frame_cache.clear()
         self._frame_states.clear()
-        self._tracker_codes.clear()
-        self._tracker_globals.clear()
-        self._registered_local.clear()
-        self._registered_global.clear()
-        self._global_var_ids.clear()
+        self._registrations.clear()
+        self._registered.clear()
         self._enclosing_var_ids.clear()
         self._enclosing_cell_refs.clear()
         self._frame_cell_cache.clear()
-        self._tracker_cells.clear()
         self._context_manager.clear()
 
     def _append_buffer_event(self, varName, var_id, data, event_name, domain, line, func=None, call_id=None, parent_call_id=None, call_depth=None):
@@ -266,14 +274,15 @@ class TraceDispatcher:
         # `context or {}`와 아래 frame 가드가 각 필드를 None으로 보고한다.
         context = self._context_manager.ensure_context(frame) or {}
         call_id = context.get("call_id")
+        registration = self._registrations.get(tracker, _NO_REGISTRATION)
 
         if domain == ENCLOSING and cell is not None:
             # var_id는 값을 소유한 closure cell을 식별한다.
             # call_id는 이 변경이 관측된 frame을 가리킨다.
             # 그래서 ENCLOSING 변수에 한해 둘은 의도적으로 다르다.
             var_id = self._get_enclosing_var_id(cell)
-        elif tracker in self._global_var_ids:
-            var_id = self._global_var_ids[tracker]
+        elif registration.var_id is not None:
+            var_id = registration.var_id
         else:
             var_id = call_id
 
@@ -338,15 +347,16 @@ class TraceDispatcher:
 
     def _relevant_for(self, frame):
         local_candidates, global_candidates = self._get_cache_entry(frame)
+        registrations = self._registrations
 
         local_relevant = [
             tracker for tracker in local_candidates
-            if self._tracker_codes.get(tracker) is frame.f_code
+            if registrations.get(tracker, _NO_REGISTRATION).code is frame.f_code
         ]
 
         global_relevant = [
             tracker for tracker in global_candidates
-            if self._tracker_globals.get(tracker) is frame.f_globals
+            if registrations.get(tracker, _NO_REGISTRATION).globals_dict is frame.f_globals
         ]
 
         return local_relevant, global_relevant
