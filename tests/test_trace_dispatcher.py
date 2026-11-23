@@ -569,6 +569,110 @@ class TestTraceDispatcherFrameExit(unittest.TestCase):
         self.assertEqual(inner()[0]._states, {})
 
 
+class TestTraceDispatcherGapFrameTracking(unittest.TestCase):
+    """A gap frame (context only, return-only cleanup tracer, line events
+    off) must get its line events back once it becomes a tracked frame.
+    """
+
+    def setUp(self):
+        self.buffer = HistoryBuffer()
+        self.dispatcher = TraceDispatcher(self.buffer)
+
+    def tearDown(self):
+        self.dispatcher.stop()
+
+    def _log_from_leaf(self):
+        # Logging from here makes the untracked caller a gap frame.
+        leaf_value = 1
+        self.dispatcher.register("leaf_value", frame=sys._getframe())
+        return leaf_value
+
+    def test_registering_in_gap_frame_records_every_line(self):
+        def gap():
+            frame = sys._getframe()
+            g = 0
+            self._log_from_leaf()
+            self.assertFalse(frame.f_trace_lines)
+
+            self.dispatcher.register("g", frame=frame)
+            g = 10
+            g = 20
+            return g
+
+        def root():
+            r = 0
+            self.dispatcher.register("r", frame=sys._getframe())
+            gap()
+            return r
+
+        root()
+
+        self.assertEqual(
+            events_for(self.buffer.getHistory(), "g"),
+            [("init", 0), ("updated", 10), ("updated", 20)],
+        )
+
+    def test_gap_frame_tracked_as_ancestor_records_every_line(self):
+        global MODULE_LEVEL_COUNTER
+        MODULE_LEVEL_COUNTER = 0
+
+        def register_global():
+            self.dispatcher.register(
+                "MODULE_LEVEL_COUNTER",
+                frame=sys._getframe(),
+            )
+
+        def gap():
+            global MODULE_LEVEL_COUNTER
+            frame = sys._getframe()
+            self._log_from_leaf()
+            self.assertFalse(frame.f_trace_lines)
+
+            # A new tracker makes this already-running frame relevant.
+            register_global()
+            MODULE_LEVEL_COUNTER = 10
+            MODULE_LEVEL_COUNTER = 20
+            return frame
+
+        def root():
+            r = 0
+            self.dispatcher.register("r", frame=sys._getframe())
+            gap()
+            return r
+
+        root()
+
+        self.assertEqual(
+            events_for(self.buffer.getHistory(), "MODULE_LEVEL_COUNTER"),
+            [("init", 0), ("updated", 10), ("updated", 20)],
+        )
+
+    def test_gap_frame_cleanup_still_runs_after_it_becomes_tracked(self):
+        frames = []
+
+        def gap():
+            frame = sys._getframe()
+            frames.append(frame)
+            g = 0
+            self._log_from_leaf()
+            self.dispatcher.register("g", frame=frame)
+            return g
+
+        def root():
+            r = 0
+            self.dispatcher.register("r", frame=sys._getframe())
+            gap()
+            return r
+
+        root()
+
+        manager = self.dispatcher._context_manager
+        self.assertNotIn(frames[0], manager._contexts)
+        self.assertNotIn(frames[0], manager._cleanup_traces)
+        self.assertNotIn(frames[0], self.dispatcher._frame_states)
+        self.assertTrue(frames[0].f_trace_lines)
+
+
 class TestTraceDispatcherAncestorEarlyExit(unittest.TestCase):
     """Covers the register() ancestor-walk early exit (issue #59): a dedup
     registration (is_new_tracker=False) must stop climbing frame.f_back as

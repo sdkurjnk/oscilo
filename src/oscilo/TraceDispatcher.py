@@ -421,6 +421,9 @@ class TraceDispatcher:
         frame_state = {}
         self._frame_states[frame] = frame_state
         frame.f_trace = self._make_line_tracer()
+
+        # gap frame이었다면 CallContextManager가 line 이벤트를 꺼 둔 상태다.
+        frame.f_trace_lines = True
         return frame_state
 
     def _ensure_active_ancestor_tracking(self, frame, is_new_tracker):
