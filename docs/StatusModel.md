@@ -168,7 +168,7 @@ ENCLOSING의 셀 ID는 `CallContextManager.next_id()`로 받는다. `call_id`와
 
 ### 정리
 
-프레임이 진짜로 끝나면 `_forget_frame_local_states(frame)`가 지역 변수 tracker들에서 그 프레임의 상태를 지우고(`tracker.forget(frame)`), `_frame_states`와 `_frame_cell_cache`에서 그 프레임을 뺀다. ENCLOSING 상태는 지우지 않는다. 클로저는 자기를 정의한 프레임이 끝난 뒤에도 호출될 수 있기 때문이다. 제너레이터나 코루틴이 `yield`로 멈춘 경우에는 다시 실행될 때 같은 비교 기준을 써야 하므로 아무것도 지우지 않는다.
+프레임이 진짜로 끝나면 `_on_frame_exit(frame)`가 그 프레임을 key로 쓰는 상태를 모두 정리한다. 먼저 `on_return()`으로 호출 컨텍스트를 지우고, `_forget_frame_local_states(frame)`로 지역 변수 tracker들에서 그 프레임의 상태를 지운 뒤(`tracker.forget(frame)`), `_frame_states`와 `_frame_cell_cache`에서 그 프레임을 뺀다. ENCLOSING 상태는 지우지 않는다. 클로저는 자기를 정의한 프레임이 끝난 뒤에도 호출될 수 있기 때문이다. 어느 쪽인지는 변수 이름이 `co_varnames`나 `co_cellvars`에 있는지로 가린다. 제너레이터나 코루틴이 `yield`로 멈춘 경우에는 다시 실행될 때 같은 비교 기준을 써야 하므로 아무것도 지우지 않는다.
 
 `unregister(tracker)`는 먼저 tracker를 `_trackers`에서 빼고 `tracker.reset()`으로 그 tracker의 `_states`를 통째로 비운다. 그다음 `_registrations`에서 등록 레코드를 꺼내고, 레코드에 적힌 `dedup_key`로 `_registered`에서 지운 뒤 `_frame_cache`를 비운다. 셀을 놓을 때 사용자 객체의 `__del__`이 실행되어 트레이스 콜백이 불릴 수 있으므로, 그 전에 캐시에서 이 tracker를 없애 두는 것이다. 이어서 레코드의 `cells`에 기록해 둔 셀 목록으로 `_enclosing_var_ids`와 `_enclosing_cell_refs`를 정리한다. 이 목록이 없으면 어느 셀이 어느 tracker의 것인지 알 수 없어서 다른 tracker의 셀까지 지우게 된다. 끝으로 남은 tracker가 없으면 `_stop_tracing()`을 부른다.
 

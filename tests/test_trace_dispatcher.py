@@ -504,6 +504,71 @@ class TestTraceDispatcherStopCleanup(unittest.TestCase):
         )
 
 
+class TestTraceDispatcherFrameExit(unittest.TestCase):
+    """Which tracker states survive the frame that produced them."""
+
+    def setUp(self):
+        self.dispatcher = TraceDispatcher(HistoryBuffer())
+
+    def tearDown(self):
+        self.dispatcher.stop()
+
+    def test_local_states_are_forgotten_on_return(self):
+        def plain():
+            x = 1
+            tracker = self.dispatcher.register("x", frame=sys._getframe())
+            x = 2
+            return tracker
+
+        def captured():
+            x = 1
+            tracker = self.dispatcher.register("x", frame=sys._getframe())
+            x = 2
+            return tracker, lambda: x
+
+        self.assertEqual(plain()._states, {})
+        self.assertEqual(captured()[0]._states, {})
+
+    def test_enclosing_frame_fallback_state_is_kept_on_return(self):
+        def make():
+            x = 1
+
+            def inner():
+                nonlocal x
+                tracker = self.dispatcher.register("x", frame=sys._getframe())
+                x += 1
+                return tracker
+
+            return inner
+
+        # Never bound to a name, so the owning cell cannot be resolved and
+        # the state is keyed by the frame.
+        tracker = make()()
+
+        self.assertEqual(len(tracker._states), 1)
+
+    def test_name_both_free_and_cell_is_forgotten_as_local(self):
+        def make():
+            x = 1
+
+            def inner():
+                tracker = self.dispatcher.register("x", frame=sys._getframe())
+                closures = [lambda: x for x in range(2)]
+                return tracker, closures, x
+
+            return inner
+
+        inner = make()
+        code = inner.__code__
+
+        # An inlined comprehension (3.12+) can make one name both a cell and
+        # a free variable; resolve() then treats it as LOCAL.
+        if not ("x" in code.co_cellvars and "x" in code.co_freevars):
+            self.skipTest("comprehension is not inlined on this version")
+
+        self.assertEqual(inner()[0]._states, {})
+
+
 class TestTraceDispatcherAncestorEarlyExit(unittest.TestCase):
     """Covers the register() ancestor-walk early exit (issue #59): a dedup
     registration (is_new_tracker=False) must stop climbing frame.f_back as

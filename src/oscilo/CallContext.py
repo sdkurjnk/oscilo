@@ -87,7 +87,9 @@ class CallContextManager:
         return self._contexts[frame]
 
     def on_return(self, frame):
-        if frame is None or is_suspended_return(frame):
+        # frame이 진짜로 끝났을 때만 부른다. yield로 멈춘 것인지는 호출하는
+        # tracer가 is_suspended_return()으로 먼저 가려낸다.
+        if frame is None:
             return
 
         self._contexts.pop(frame, None)

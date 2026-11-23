@@ -324,16 +324,28 @@ class TraceDispatcher:
         # LOCAL 상태는 tracker가 frame을 key로 소유한다.
         return self._check_and_log(frame, tracker, domain, frame)
 
+    def _on_frame_exit(self, frame):
+        # frame이 진짜로 끝났을 때(yield로 멈춘 것이 아닐 때) 그 frame을 key로
+        # 쓰는 상태를 모두 정리한다.
+        self._context_manager.on_return(frame)
+        self._forget_frame_local_states(frame)
+        self._frame_states.pop(frame, None)
+        self._frame_cell_cache.pop(frame, None)
+
     def _forget_frame_local_states(self, frame):
         # LOCAL 상태는 frame을 key로 하며 frame과 함께 소멸한다.
-        # (기존 return 시 _frame_states.pop과 같은 동작.)
         # ENCLOSING 상태(cell-keyed·frame fallback)는 frame보다 오래 산다.
         # closure가 정의 frame return 뒤에도 호출될 수 있기 때문이다.
         # 그래서 여기선 건너뛰고 unregister/stop에서만 정리한다.
-        local_relevant, _ = self._relevant_for(frame)
+        #
+        # 값은 필요 없으므로 resolve() 없이 정적 이름만 본다. 컴프리헨션이
+        # 인라인되면 같은 이름이 co_freevars에도 있을 수 있어서, resolve()와
+        # 같은 순서로 co_varnames/co_cellvars에 있는지를 기준으로 삼는다.
+        code = frame.f_code
+        local_relevant, _ = self._get_cache_entry(frame)
+
         for tracker in local_relevant:
-            domain, _ = self._resolver.resolve(frame, tracker.varName)
-            if not self._is_enclosing_case(domain, tracker):
+            if tracker.varName in code.co_varnames or tracker.varName in code.co_cellvars:
                 tracker.forget(frame)
 
     def _get_cache_entry(self, frame):
@@ -394,10 +406,7 @@ class TraceDispatcher:
                 if is_suspended_return(current_frame):
                     return trace_lines
 
-                self._context_manager.on_return(current_frame)
-                self._forget_frame_local_states(current_frame)
-                self._frame_states.pop(current_frame, None)
-                self._frame_cell_cache.pop(current_frame, None)
+                self._on_frame_exit(current_frame)
                 return None
 
             return trace_lines

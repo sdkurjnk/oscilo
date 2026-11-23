@@ -61,7 +61,7 @@ self._ensure_frame_tracking(frame)
 
 라인 트레이서는 매번 자기 자신을 돌려줘서 다음 이벤트에도 계속 불린다. `return` 이벤트가 와도 먼저 `_process_frame()`으로 값을 한 번 더 검사하므로 마지막 줄에서 일어난 변경을 놓치지 않는다.
 
-그다음 프레임이 진짜로 끝난 경우라면 정리를 한다. 먼저 `on_return`으로 호출 컨텍스트를 지우고, 그 프레임의 LOCAL 상태를 tracker에서 지운 뒤, `_frame_states`와 `_frame_cell_cache`에서 그 프레임을 뺀다. 마지막으로 `None`을 돌려줘서 트레이서를 뗀다. 모두 프레임을 key로 쓰는 자료구조라서 이 정리를 빼먹으면 상태가 프레임보다 오래 남아 메모리가 샌다.
+그다음 프레임이 진짜로 끝난 경우라면 `_on_frame_exit()`으로 정리를 한다. 먼저 `on_return`으로 호출 컨텍스트를 지우고, 그 프레임의 LOCAL 상태를 tracker에서 지운 뒤, `_frame_states`와 `_frame_cell_cache`에서 그 프레임을 뺀다. 마지막으로 `None`을 돌려줘서 트레이서를 뗀다. 모두 프레임을 key로 쓰는 자료구조라서 이 정리를 빼먹으면 상태가 프레임보다 오래 남아 메모리가 샌다.
 
 ENCLOSING 상태는 예외다. 클로저는 자기를 정의한 프레임이 끝난 뒤에도 호출될 수 있으므로, ENCLOSING 상태는 프레임이 끝나도 지우지 않고 `unregister()`나 `stop()` 때 정리한다.
 
