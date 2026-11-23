@@ -111,12 +111,11 @@ class CallContextManager:
             call_depth = parent_context["call_depth"] + 1
 
         context = {
-            "call_id": self._next_call_id,
+            "call_id": self.next_id(),
             "parent_call_id": parent_call_id,
             "call_depth": call_depth,
         }
 
-        self._next_call_id += 1
         self._contexts[frame] = context
 
         return context
