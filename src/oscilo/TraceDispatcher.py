@@ -68,8 +68,8 @@ class TraceDispatcher:
         # 지역은 (이름, code), 전역은 (이름, id(globals))라 key가 서로 겹치지 않는다.
         self._registered = {}
 
-        # 활성 frame 추적 마커. frame return에서 제거되고 stop()에서 전체 비워진다.
-        self._frame_states = {}
+        # line tracer를 붙인 활성 frame들. frame return에서 제거되고 stop()에서 전체 비워진다.
+        self._frame_states = set()
 
         # ENCLOSING 값 이력은 tracker가 소유하고, 아래 두 dict는 dispatcher가 관리한다.
         # cell은 소유 frame return 후에도 살아야 하고(closure는 나중에 호출됨),
@@ -329,7 +329,7 @@ class TraceDispatcher:
         # 쓰는 상태를 모두 정리한다.
         self._context_manager.on_return(frame)
         self._forget_frame_local_states(frame)
-        self._frame_states.pop(frame, None)
+        self._frame_states.discard(frame)
         self._frame_cell_cache.pop(frame, None)
 
     def _forget_frame_local_states(self, frame):
@@ -408,17 +408,14 @@ class TraceDispatcher:
         return self._trace_lines
 
     def _ensure_frame_tracking(self, frame):
-        frame_state = self._frame_states.get(frame)
-        if frame_state is not None:
-            return frame_state
+        if frame in self._frame_states:
+            return
 
-        frame_state = {}
-        self._frame_states[frame] = frame_state
+        self._frame_states.add(frame)
         frame.f_trace = self._trace_lines
 
         # gap frame이었다면 CallContextManager가 line 이벤트를 꺼 둔 상태다.
         frame.f_trace_lines = True
-        return frame_state
 
     def _ensure_active_ancestor_tracking(self, frame, is_new_tracker):
         current_frame = frame.f_back

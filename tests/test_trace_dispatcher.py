@@ -427,10 +427,10 @@ class TestTraceDispatcherStopCleanup(unittest.TestCase):
 
         self.assertEqual(self.dispatcher._context_manager._contexts, {})
         self.assertEqual(self.dispatcher._context_manager._cleanup_traces, {})
-        self.assertEqual(self.dispatcher._frame_states, {})
+        self.assertEqual(self.dispatcher._frame_states, set())
         self.assertEqual(self.dispatcher._trackers, [])
 
-    def test_active_ancestor_states_are_isolated_and_removed_on_return(self):
+    def test_active_ancestor_frames_are_tracked_and_removed_on_return(self):
         global MODULE_LEVEL_COUNTER
         MODULE_LEVEL_COUNTER = {"value": 0}
         returned_frames = []
@@ -454,10 +454,6 @@ class TestTraceDispatcherStopCleanup(unittest.TestCase):
             self.assertIn(
                 parent_frame,
                 self.dispatcher._frame_states,
-            )
-            self.assertIsNot(
-                self.dispatcher._frame_states[outer_frame],
-                self.dispatcher._frame_states[parent_frame],
             )
 
             returned_frames.append(outer_frame)
@@ -500,7 +496,7 @@ class TestTraceDispatcherStopCleanup(unittest.TestCase):
         )
         self.assertEqual(
             self.dispatcher._frame_states,
-            {},
+            set(),
         )
 
 
