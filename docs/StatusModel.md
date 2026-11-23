@@ -115,7 +115,7 @@ def check_owned(self, frame, domain, key):
     return event_name, new_state
 ```
 
-dispatcher의 세 진입점은 도메인에 따라 다른 key를 넘긴다.
+dispatcher의 세 진입점은 도메인에 따라 다른 key를 정해 `_check_and_log`에 넘긴다. `check_owned`를 부르고 결과를 로그에 남기는 일은 `_check_and_log`가 공통으로 맡는다.
 
 | 도메인 | 진입점 | key | 이유 |
 |---|---|---|---|

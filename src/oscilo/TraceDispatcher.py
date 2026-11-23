@@ -119,6 +119,16 @@ class TraceDispatcher:
         except Exception:
             return None
 
+    def _check_and_log(self, frame, tracker, domain, key, cell=None):
+        # 세 진입점의 공통 경로. 진입점은 도메인에 맞는 key만 정한다.
+        # dispatcher는 이전 값을 안 갖고 tracker에 "검사해"만 한다.
+        event_name, new_state = tracker.check_owned(frame, domain, key)
+
+        if event_name in BUFFERED_EVENTS:
+            self._log_event(frame, tracker, event_name, new_state, domain, cell=cell)
+
+        return event_name, new_state
+
     def _check_and_log_enclosing(self, frame, tracker, varName):
         cell_key = self._resolve_cell_key_cached(frame, varName)
 
@@ -133,12 +143,7 @@ class TraceDispatcher:
         # 호출 간 identity가 불안정하고 var_id는 call_id로 강등된다(_log_event 처리).
         storage_key = cell_key if cell_key is not None else frame
 
-        event_name, new_state = tracker.check_owned(frame, ENCLOSING, storage_key)
-
-        if event_name in BUFFERED_EVENTS:
-            self._log_event(frame, tracker, event_name, new_state, ENCLOSING, cell=cell_key)
-
-        return event_name, new_state
+        return self._check_and_log(frame, tracker, ENCLOSING, storage_key, cell=cell_key)
 
     def register(self, varName, frame):
         if frame is None:
@@ -302,22 +307,11 @@ class TraceDispatcher:
     def _check_and_log_global(self, frame, tracker, domain):
         # GLOBAL은 모든 관측 frame이 하나의 timeline을 공유하므로, tracker가
         # GLOBAL_STATE_KEY 하나로 단일 상태를 소유한다.
-        event_name, new_state = tracker.check_owned(frame, domain, GLOBAL_STATE_KEY)
-
-        if event_name in BUFFERED_EVENTS:
-            self._log_event(frame, tracker, event_name, new_state, domain)
-
-        return event_name, new_state
+        return self._check_and_log(frame, tracker, domain, GLOBAL_STATE_KEY)
 
     def _check_and_log_local(self, frame, tracker, domain):
-        # LOCAL 상태는 tracker가 frame을 key로 소유한다. dispatcher는 이전 값을
-        # 안 갖고 "검사해"만 한다.
-        event_name, new_state = tracker.check_owned(frame, domain, frame)
-
-        if event_name in BUFFERED_EVENTS:
-            self._log_event(frame, tracker, event_name, new_state, domain)
-
-        return event_name, new_state
+        # LOCAL 상태는 tracker가 frame을 key로 소유한다.
+        return self._check_and_log(frame, tracker, domain, frame)
 
     def _forget_frame_local_states(self, frame):
         # LOCAL 상태는 frame을 key로 하며 frame과 함께 소멸한다.
