@@ -62,6 +62,30 @@ class TestTrackerSelectionCache(unittest.TestCase):
 
         self.assertIn(tracker, local_relevant)
 
+    def test_equal_but_distinct_code_objects_do_not_share_cache_entry(self):
+        # Code objects compare by value, so re-defining the same source (a
+        # re-run notebook cell, a reloaded module) yields equal but distinct
+        # code. The cached local result must not leak between them.
+        code_a = _code_with_locals("target")
+        code_b = _code_with_locals("target")
+        self.assertEqual(code_a, code_b)
+        self.assertIsNot(code_a, code_b)
+
+        frame_a = FakeFrame(code_a, {})
+        frame_b = FakeFrame(code_b, {})
+        tracker = self.dispatcher.register("target", frame=frame_a)
+
+        # Populate the cache from each side first.
+        for first, second in ((frame_a, frame_b), (frame_b, frame_a)):
+            self.dispatcher._frame_cache.clear()
+            relevant = {
+                frame: self.dispatcher._relevant_for(frame)[0]
+                for frame in (first, second)
+            }
+
+            self.assertEqual(relevant[frame_a], [tracker])
+            self.assertEqual(relevant[frame_b], [])
+
     def test_global_candidate_requires_exact_globals_identity(self):
         code = _code_with_locals()  # "counter" is not a local name here
         module_globals = {"counter": 1}
@@ -174,12 +198,12 @@ class TestTrackerSelectionCache(unittest.TestCase):
         local_tracker = self.dispatcher.register("local_name", frame=frame)
         global_tracker = self.dispatcher.register("global_name", frame=frame)
 
-        local_candidates, global_candidates = self.dispatcher._get_cache_entry(frame)
+        local_relevant, global_candidates = self.dispatcher._get_cache_entry(frame)
 
-        self.assertIn(local_tracker, local_candidates)
+        self.assertIn(local_tracker, local_relevant)
         self.assertNotIn(local_tracker, global_candidates)
         self.assertIn(global_tracker, global_candidates)
-        self.assertNotIn(global_tracker, local_candidates)
+        self.assertNotIn(global_tracker, local_relevant)
 
 
 if __name__ == "__main__":

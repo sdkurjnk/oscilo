@@ -38,8 +38,8 @@ class _Registration:
 
 
 # 등록 정보가 없는 tracker를 조회했을 때 쓰는 읽기 전용 기본값.
-# unregister 도중 실행된 사용자 코드(__del__ 등)가 trace callback을 부르면
-# 캐시에 남은 tracker가 조회될 수 있는데, 이때 예외가 나면 추적이 통째로 꺼진다.
+# 검사 중인 값의 __eq__가 다른 tracker를 unregister하면, 이미 뽑아 둔 목록에
+# 등록 정보 없는 tracker가 남아 조회될 수 있다.
 _NO_REGISTRATION = _Registration(dedup_key=None)
 
 
@@ -57,6 +57,8 @@ class TraceDispatcher:
         self._context_manager = CallContextManager()
 
         # code 객체별 관련 tracker 캐시. 무관한 frame은 line tracing을 건너뛴다.
+        # code 객체는 내용이 같으면 ==로도 같아서(같은 소스를 다시 정의한 경우 등)
+        # id(code)를 key로 쓴다. 값에 code를 함께 담아 그 id가 재사용되지 않게 한다.
         self._frame_cache = {}
 
         # tracker별 등록 정보(tracker -> _Registration).
@@ -222,13 +224,16 @@ class TraceDispatcher:
         if registration is not None:
             self._registered.pop(registration.dedup_key, None)
 
+        # 아래에서 cell을 놓으면 사용자 객체의 __del__이 실행돼 trace callback이
+        # 불릴 수 있다. 그 전에 캐시에서 이 tracker를 없앤다.
+        self._frame_cache.clear()
+
+        if registration is not None:
             # ENCLOSING 비교 상태는 이제 tracker가 갖고 위 tracker.reset()이 버린다.
             # 여기선 dispatcher 소유인 var_id와 cell strong-ref만 정리한다.
             for cell_key in registration.cells:
                 self._enclosing_var_ids.pop(cell_key, None)
                 self._enclosing_cell_refs.pop(cell_key, None)
-
-        self._frame_cache.clear()
 
         if not self._trackers:
             self._stop_tracing()
@@ -333,26 +338,32 @@ class TraceDispatcher:
 
     def _get_cache_entry(self, frame):
         code = frame.f_code
-        entry = self._frame_cache.get(code)
-        if entry is not None:
-            return entry
+        cached = self._frame_cache.get(id(code))
+        if cached is not None:
+            return cached[1]
 
         names = _local_names(code)
-        local_candidates = [tracker for tracker in self._trackers if tracker.varName in names]
-        global_candidates = [tracker for tracker in self._trackers if tracker.varName not in names]
+        local_relevant = []
+        global_candidates = []
 
-        entry = (local_candidates, global_candidates)
-        self._frame_cache[code] = entry
+        for tracker in self._trackers:
+            registration = self._registrations.get(tracker, _NO_REGISTRATION)
+
+            # 지역 이름 tracker는 code만으로 최종 판정된다.
+            if registration.code is code:
+                local_relevant.append(tracker)
+            # 전역 이름 tracker는 frame.f_globals까지 봐야 하므로 후보로만 남긴다.
+            elif registration.globals_dict is not None and tracker.varName not in names:
+                global_candidates.append(tracker)
+
+        entry = (local_relevant, global_candidates)
+        self._frame_cache[id(code)] = (code, entry)
         return entry
 
     def _relevant_for(self, frame):
-        local_candidates, global_candidates = self._get_cache_entry(frame)
+        # local_relevant는 캐시에 든 list 그대로이므로 호출자가 고치면 안 된다.
+        local_relevant, global_candidates = self._get_cache_entry(frame)
         registrations = self._registrations
-
-        local_relevant = [
-            tracker for tracker in local_candidates
-            if registrations.get(tracker, _NO_REGISTRATION).code is frame.f_code
-        ]
 
         global_relevant = [
             tracker for tracker in global_candidates

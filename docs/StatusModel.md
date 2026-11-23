@@ -55,7 +55,7 @@ tracker = self._registered.get(dedup_key)
 
 레코드는 아래 선별 층에서 스코프가 같은지 확인할 때, 로그에 남길 `var_id`를 고를 때, 그리고 `unregister()`에서 dedup 키와 셀을 정리할 때 쓰인다.
 
-등록 정보가 없는 tracker를 조회하면 모든 필드가 비어 있는 `_NO_REGISTRATION`을 대신 쓴다. `unregister()`가 셀을 놓으면서 사용자 객체의 `__del__`이 실행되면, 아직 비우지 않은 `_frame_cache`에서 방금 지운 tracker가 조회될 수 있다. 이때 트레이스 콜백에서 예외가 나면 파이썬이 추적을 통째로 꺼 버리므로, 관련 없는 tracker로 판정하고 넘어간다.
+등록 정보가 없는 tracker를 조회하면 모든 필드가 비어 있는 `_NO_REGISTRATION`을 대신 쓴다. 검사 중인 값의 `__eq__`가 다른 tracker를 `unregister()`하면, 이미 뽑아 둔 목록에 등록 정보가 사라진 tracker가 남아 조회될 수 있기 때문이다.
 
 `globals_dict`가 globals dict 자체를 들고 있다는 점도 의미가 있다. dict가 살아 있는 동안에는 dedup 키에 쓴 `id()` 값이 다른 객체에 재사용될 수 없기 때문이다.
 
@@ -65,38 +65,43 @@ tracker = self._registered.get(dedup_key)
 
 ## 선별 층: 두 단계로 거른다
 
-이 프레임에 관련된 tracker가 있는지는 `"call"` 이벤트마다, 그리고 추적 중인 프레임에서는 매 줄마다 묻는 질문이다. 그래서 먼저 싼 검사로 후보를 좁히고, 그다음 정확한 검사로 확정한다.
+이 프레임에 관련된 tracker가 있는지는 `"call"` 이벤트마다, 그리고 추적 중인 프레임에서는 매 줄마다 묻는 질문이다. 그래서 code 객체만으로 알 수 있는 결과는 캐시해 두고, 프레임마다 달라질 수 있는 부분만 매번 확인한다.
 
 ### 1단계: `_frame_cache`
 
 ```python
 names = _local_names(code)   # co_varnames, co_cellvars, co_freevars의 합집합
-local_candidates  = [t for t in self._trackers if t.varName in names]
-global_candidates = [t for t in self._trackers if t.varName not in names]
+
+for tracker in self._trackers:
+    registration = self._registrations.get(tracker, _NO_REGISTRATION)
+    if registration.code is code:
+        local_relevant.append(tracker)
+    elif registration.globals_dict is not None and tracker.varName not in names:
+        global_candidates.append(tracker)
 ```
 
-tracker의 변수 이름이 이 code 객체의 지역 이름 집합에 들어 있는지만 본다. code 객체의 정적 정보만 쓰기 때문에 같은 code 객체라면 어느 프레임에서든 결과가 같고, 그래서 `f_code`를 키로 안전하게 캐시할 수 있다.
+지역 이름 tracker는 등록 당시의 code 객체와 같은지만 보면 되므로 여기서 최종 결과가 나온다. 전역 이름 tracker는 이 code 객체가 그 이름을 지역으로 가리지 않는지만 확인해 후보로 남긴다. 둘 다 code 객체의 정적 정보와 등록 레코드만 쓰기 때문에 같은 code 객체라면 어느 프레임에서든 결과가 같고, 그래서 안전하게 캐시할 수 있다.
+
+캐시 키는 code 객체가 아니라 `id(code)`다. code 객체는 내용이 같으면 `==`로도 같다. 노트북 셀을 다시 실행하거나 모듈을 다시 불러와 같은 소스를 또 정의하면, 서로 다른 code 객체가 같은 키로 취급되어 한쪽의 결과가 다른 쪽에 쓰인다. `id()`로 구분하면 이런 일이 없고, code 객체의 해시를 매번 계산하지 않아도 된다. 캐시 값에 code 객체를 함께 담아 두므로 항목이 남아 있는 동안 그 `id()`가 다른 객체에 재사용되지 않는다.
 
 프레임마다 달라질 수 있는 `f_globals`는 캐시에 넣지 않는다. 그것은 2단계에서 현재 프레임을 보고 판단한다.
 
-### 2단계: 등록 레코드와 비교
+### 2단계: 전역 후보 확정
 
-1단계는 이름만 보므로 다른 모듈에 있는 같은 이름의 함수나 같은 이름의 전역도 통과한다. 2단계에서는 등록 당시의 실제 스코프와 `is`로 비교해 이런 경우를 걸러낸다.
+1단계를 통과한 전역 후보에는 다른 모듈에 있는 같은 이름의 전역도 섞여 있다. 2단계에서는 등록 당시의 globals dict와 `is`로 비교해 이런 경우를 걸러낸다.
 
 ```python
-local_relevant  = [t for t in local_candidates
-                   if registrations.get(t, _NO_REGISTRATION).code is frame.f_code]
 global_relevant = [t for t in global_candidates
                    if registrations.get(t, _NO_REGISTRATION).globals_dict is frame.f_globals]
 ```
 
-이름이 아니라 객체가 같은지를 보기 때문에 이름이 같은 함수나 모듈이 섞이지 않는다. 같은 code 객체가 서로 다른 globals에서 실행되는 경우에도 1단계 캐시는 함께 쓰지만, 전역 변수 tracker는 현재 `frame.f_globals`가 등록 당시의 dict와 같을 때만 선택된다.
+두 단계 모두 이름이 아니라 객체가 같은지를 보기 때문에 이름이 같은 함수나 모듈이 섞이지 않는다. 같은 code 객체가 서로 다른 globals에서 실행되는 경우에도 1단계 캐시는 함께 쓰지만, 전역 변수 tracker는 현재 `frame.f_globals`가 등록 당시의 dict와 같을 때만 선택된다.
 
 이 정보를 tracker가 아니라 dispatcher가 들고 있는 것은, tracker가 등록한 그 스코프에만 적용되도록 묶어 두기 위해서다.
 
 ### 캐시 무효화
 
-`_frame_cache`는 `_trackers`에서 파생된 캐시라서 목록이 바뀌면 통째로 비운다. 새 tracker를 만든 `register()`와 `unregister()`가 여기에 해당한다. dedup으로 기존 tracker를 다시 쓴 경우에는 목록이 그대로이므로 비우지 않는다.
+`_frame_cache`는 `_trackers`와 `_registrations`에서 파생된 캐시라서 목록이 바뀌면 통째로 비운다. 두 자료구조는 언제나 함께 바뀐다. 새 tracker를 만든 `register()`와 `unregister()`가 여기에 해당한다. dedup으로 기존 tracker를 다시 쓴 경우에는 목록이 그대로이므로 비우지 않는다.
 
 ---
 
@@ -157,7 +162,7 @@ ENCLOSING의 셀 ID는 `CallContextManager.next_id()`로 받는다. `call_id`와
 
 ### 실행 중인 한 줄
 
-추적 중인 프레임에서 한 줄이 실행되면 `line` 이벤트가 라인 트레이서로 들어온다. 트레이서는 `_process_frame(frame)`을 부르고, 여기서 `_relevant_for(frame)`가 `_frame_cache`로 후보를 뽑은 뒤 `_registrations`의 등록 레코드로 확정한다. 확정된 tracker마다 도메인을 다시 해석해서 `_check_tracker`에 넘기면, 지역 변수는 `_check_and_log_local`로 프레임을 key로, 전역 변수는 `_check_and_log_global`로 `GLOBAL_STATE_KEY`를 key로, ENCLOSING 변수는 `_check_and_log_enclosing`으로 셀을 key로 보낸다. 검사 결과가 `init`, `updated`, `deleted` 중 하나라면 `_log_event`가 `HistoryBuffer.append()`로 레코드를 남긴다.
+추적 중인 프레임에서 한 줄이 실행되면 `line` 이벤트가 라인 트레이서로 들어온다. 트레이서는 `_process_frame(frame)`을 부르고, 여기서 `_relevant_for(frame)`가 `_frame_cache`에서 지역 tracker와 전역 후보를 꺼내고, 전역 후보는 등록 레코드의 globals dict로 확정한다. 확정된 tracker마다 도메인을 다시 해석해서 `_check_tracker`에 넘기면, 지역 변수는 `_check_and_log_local`로 프레임을 key로, 전역 변수는 `_check_and_log_global`로 `GLOBAL_STATE_KEY`를 key로, ENCLOSING 변수는 `_check_and_log_enclosing`으로 셀을 key로 보낸다. 검사 결과가 `init`, `updated`, `deleted` 중 하나라면 `_log_event`가 `HistoryBuffer.append()`로 레코드를 남긴다.
 
 `return` 이벤트에서도 정리하기 전에 `_process_frame`을 한 번 더 돌려서 마지막 줄에서 일어난 변경을 놓치지 않는다.
 
@@ -165,7 +170,7 @@ ENCLOSING의 셀 ID는 `CallContextManager.next_id()`로 받는다. `call_id`와
 
 프레임이 진짜로 끝나면 `_forget_frame_local_states(frame)`가 지역 변수 tracker들에서 그 프레임의 상태를 지우고(`tracker.forget(frame)`), `_frame_states`와 `_frame_cell_cache`에서 그 프레임을 뺀다. ENCLOSING 상태는 지우지 않는다. 클로저는 자기를 정의한 프레임이 끝난 뒤에도 호출될 수 있기 때문이다. 제너레이터나 코루틴이 `yield`로 멈춘 경우에는 다시 실행될 때 같은 비교 기준을 써야 하므로 아무것도 지우지 않는다.
 
-`unregister(tracker)`는 먼저 tracker를 `_trackers`에서 빼고 `tracker.reset()`으로 그 tracker의 `_states`를 통째로 비운다. 그다음 `_registrations`에서 등록 레코드를 꺼내고, 레코드에 적힌 `dedup_key`로 `_registered`에서 지운다. 이어서 레코드의 `cells`에 기록해 둔 셀 목록으로 `_enclosing_var_ids`와 `_enclosing_cell_refs`를 정리한다. 이 목록이 없으면 어느 셀이 어느 tracker의 것인지 알 수 없어서 다른 tracker의 셀까지 지우게 된다. 끝으로 `_frame_cache`를 비우고, 남은 tracker가 없으면 `_stop_tracing()`을 부른다.
+`unregister(tracker)`는 먼저 tracker를 `_trackers`에서 빼고 `tracker.reset()`으로 그 tracker의 `_states`를 통째로 비운다. 그다음 `_registrations`에서 등록 레코드를 꺼내고, 레코드에 적힌 `dedup_key`로 `_registered`에서 지운 뒤 `_frame_cache`를 비운다. 셀을 놓을 때 사용자 객체의 `__del__`이 실행되어 트레이스 콜백이 불릴 수 있으므로, 그 전에 캐시에서 이 tracker를 없애 두는 것이다. 이어서 레코드의 `cells`에 기록해 둔 셀 목록으로 `_enclosing_var_ids`와 `_enclosing_cell_refs`를 정리한다. 이 목록이 없으면 어느 셀이 어느 tracker의 것인지 알 수 없어서 다른 tracker의 셀까지 지우게 된다. 끝으로 남은 tracker가 없으면 `_stop_tracing()`을 부른다.
 
 `stop()`은 남아 있는 모든 tracker를 `reset()`하고 `_trackers`를 비운 뒤 `_stop_tracing()`을 부른다.
 
@@ -181,7 +186,7 @@ ENCLOSING의 셀 ID는 `CallContextManager.next_id()`로 받는다. `call_id`와
 | `_registrations` | tracker | `_Registration` 레코드 | `unregister`, `_stop_tracing` |
 | `_enclosing_var_ids` | `id(cell)` | 셀별 `var_id` | `unregister`, `_stop_tracing` |
 | `_enclosing_cell_refs` | `id(cell)` | 셀에 대한 강한 참조 | `unregister`, `_stop_tracing` |
-| `_frame_cache` | `f_code` | 지역/전역 후보 목록 | tracker 목록이 바뀔 때, `_stop_tracing` |
+| `_frame_cache` | `id(f_code)` | code 객체, 지역 tracker 목록, 전역 후보 목록 | tracker 목록이 바뀔 때, `_stop_tracing` |
 | `_frame_states` | frame | 추적 표시 | 프레임이 진짜로 끝날 때, `_stop_tracing` |
 | `_frame_cell_cache` | frame | `id(cell)` 또는 `None` | 프레임이 진짜로 끝날 때, `_stop_tracing` |
 | `VariableTracker._states` | frame, `id(cell)`, `GLOBAL_STATE_KEY` | 직전 상태 | 지역 변수는 프레임이 끝날 때 `forget`, 전체는 `unregister`나 `stop`의 `reset` |
