@@ -395,23 +395,17 @@ class TraceDispatcher:
             domain, _ = self._resolver.resolve(frame, tracker.varName)
             self._check_tracker(frame, tracker, domain, is_local=False)
 
-    def _make_line_tracer(self):
-        def trace_lines(current_frame, current_event, current_arg):
-            if current_event not in ("line", "return"):
-                return trace_lines
+    def _trace_lines(self, frame, event, arg):
+        if event not in ("line", "return"):
+            return self._trace_lines
 
-            self._process_frame(current_frame)
+        self._process_frame(frame)
 
-            if current_event == "return":
-                if is_suspended_return(current_frame):
-                    return trace_lines
+        if event == "return" and not is_suspended_return(frame):
+            self._on_frame_exit(frame)
+            return None
 
-                self._on_frame_exit(current_frame)
-                return None
-
-            return trace_lines
-
-        return trace_lines
+        return self._trace_lines
 
     def _ensure_frame_tracking(self, frame):
         frame_state = self._frame_states.get(frame)
@@ -420,7 +414,7 @@ class TraceDispatcher:
 
         frame_state = {}
         self._frame_states[frame] = frame_state
-        frame.f_trace = self._make_line_tracer()
+        frame.f_trace = self._trace_lines
 
         # gap frame이었다면 CallContextManager가 line 이벤트를 꺼 둔 상태다.
         frame.f_trace_lines = True

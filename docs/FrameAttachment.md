@@ -2,7 +2,7 @@
 
 이 문서는 `TraceDispatcher`가 어느 프레임에 라인 트레이서를 붙이고 어느 프레임은 그냥 두는지, 그 기준을 정리한다.
 
-관련 코드는 `../src/oscilo/TraceDispatcher.py`의 `_trace_calls`, `_ensure_frame_tracking`, `_ensure_active_ancestor_tracking`, `_make_line_tracer`, `register`이다.
+관련 코드는 `../src/oscilo/TraceDispatcher.py`의 `_trace_calls`, `_ensure_frame_tracking`, `_ensure_active_ancestor_tracking`, `_trace_lines`, `register`이다.
 
 ---
 
@@ -51,13 +51,13 @@ self._ensure_frame_tracking(frame)
 
 이 지름길이 없으면 재귀에서 문제가 된다. 재귀 함수가 깊이마다 같은 변수를 `register()`하면 각 등록이 매번 조상 체인 전체를 훑게 되고, 전체 비용이 재귀 깊이의 제곱에 가깝게 늘어난다.
 
-## 트레이서는 프레임마다 따로 만든다
+## 트레이서는 모든 프레임이 함께 쓴다
 
-`_ensure_frame_tracking`은 `_make_line_tracer()`로 새 트레이서를 만들어 프레임의 `f_trace`에 붙이고, 붙인 프레임을 `_frame_states`에 표시해 둔다. 같은 프레임에 다시 요청이 오면 이미 붙어 있으므로 아무것도 하지 않는다.
+`_ensure_frame_tracking`은 dispatcher의 메서드인 `_trace_lines`를 프레임의 `f_trace`에 붙이고, 붙인 프레임을 `_frame_states`에 표시해 둔다. 같은 프레임에 다시 요청이 오면 이미 붙어 있으므로 아무것도 하지 않는다.
 
 트레이서를 붙일 때 `f_trace_lines`도 `True`로 켠다. 호출 트리를 잇기 위해 만든 중간 프레임에는 [호출 컨텍스트 트리](CallContext.md)의 정리용 트레이서가 붙어 라인 이벤트가 꺼져 있다. 이런 프레임이 나중에 추적 대상이 되었을 때 트레이서만 바꾸면 `return`에서야 처음 불려서, 마지막 값만 기록되고 그 사이의 변경은 빠진다.
 
-변수의 이전 값은 트레이서가 아니라 `VariableTracker`가 들고 있다. LOCAL 변수는 프레임을 key로 저장되기 때문에, 재귀로 같은 code 객체의 프레임이 여러 개 동시에 살아 있어도 호출마다 상태가 따로 관리된다. code 객체를 key로 썼다면 재귀 호출들이 서로의 이전 값을 덮어썼을 것이다.
+트레이서 하나를 여러 프레임이 함께 써도 되는 것은 트레이서가 프레임별 상태를 갖지 않기 때문이다. 변수의 이전 값은 트레이서가 아니라 `VariableTracker`가 들고 있다. LOCAL 변수는 프레임을 key로 저장되기 때문에, 재귀로 같은 code 객체의 프레임이 여러 개 동시에 살아 있어도 호출마다 상태가 따로 관리된다. code 객체를 key로 썼다면 재귀 호출들이 서로의 이전 값을 덮어썼을 것이다.
 
 ## 언제 정리하나
 
