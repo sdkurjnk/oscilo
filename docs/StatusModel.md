@@ -70,7 +70,7 @@ tracker = self._registered.get(dedup_key)
 ### 1단계: `_frame_cache`
 
 ```python
-names = set(code.co_varnames) | set(code.co_cellvars) | set(code.co_freevars)
+names = _local_names(code)   # co_varnames, co_cellvars, co_freevars의 합집합
 local_candidates  = [t for t in self._trackers if t.varName in names]
 global_candidates = [t for t in self._trackers if t.varName not in names]
 ```
@@ -123,6 +123,8 @@ dispatcher의 세 진입점은 도메인에 따라 다른 key를 정해 `_check_
 | GLOBAL | `_check_and_log_global` | `GLOBAL_STATE_KEY` | 모든 프레임이 하나의 타임라인을 공유 |
 | ENCLOSING | `_check_and_log_enclosing` | `id(cell)`, 셀을 못 찾으면 `frame` | 값의 주인이 클로저 셀 |
 
+어느 진입점으로 보낼지는 `_check_tracker`가 정한다. 전역 이름으로 등록된 tracker는 언제나 `_check_and_log_global`로 가고, 지역 이름으로 등록된 tracker는 ENCLOSING인지에 따라 나머지 둘로 갈린다. `register()`와 `_process_frame()`이 모두 이 함수를 거치므로 같은 규칙을 따른다.
+
 이렇게 tracker 하나가 자기 변수의 모든 인스턴스를 `_states`에 key별로 들고 있으니 재귀 호출도 프레임별로 나뉜다. dispatcher는 판정과 저장에는 관여하지 않고, 어느 key로 보낼지와 무엇을 로그에 남길지, 어떤 `var_id`를 붙일지만 맡는다.
 
 세 진입점은 모두 `_guarded_check_and_log`로 감싸서 호출된다. 추적 중인 값의 `__eq__`가 예외를 던지는 식으로 검사가 실패해도 그 tracker의 그 이벤트 하나만 건너뛰고, 사용자 프로그램으로는 예외가 새어 나가지 않는다. 이 부분은 [변경 감지 전략](ChangeDetection.md)의 예외 격리 절에 자세히 나와 있다.
@@ -151,11 +153,11 @@ ENCLOSING의 셀 ID는 `CallContextManager.next_id()`로 받는다. `call_id`와
 
 이어서 `_start_tracing()`으로 훅을 건다. `sys.settrace(_trace_calls)`는 처음 한 번만 호출된다. 그리고 `_ensure_frame_tracking(frame)`으로 등록 프레임에 트레이서를 붙여 `_frame_states`에 표시하고, `_ensure_active_ancestor_tracking(frame, is_new_tracker)`로 `f_back`을 따라 올라가며 관련 있는 조상 프레임에도 트레이서를 붙인다. 이 탐색은 `<module>`에서 멈춘다.
 
-마지막으로 도메인에 맞는 `_check_and_log_*`를 불러 `check_owned`로 현재 값을 검사한다. 처음 보는 값이므로 여기서 `init` 이벤트가 기록된다.
+마지막으로 `_check_tracker`가 도메인에 맞는 `_check_and_log_*`를 불러 `check_owned`로 현재 값을 검사한다. 처음 보는 값이므로 여기서 `init` 이벤트가 기록된다.
 
 ### 실행 중인 한 줄
 
-추적 중인 프레임에서 한 줄이 실행되면 `line` 이벤트가 라인 트레이서로 들어온다. 트레이서는 `_process_frame(frame)`을 부르고, 여기서 `_relevant_for(frame)`가 `_frame_cache`로 후보를 뽑은 뒤 `_registrations`의 등록 레코드로 확정한다. 확정된 tracker마다 도메인을 다시 해석해서 지역 변수는 `_check_and_log_local`로 프레임을 key로, 전역 변수는 `_check_and_log_global`로 `GLOBAL_STATE_KEY`를 key로, ENCLOSING 변수는 `_check_and_log_enclosing`으로 셀을 key로 보낸다. 검사 결과가 `init`, `updated`, `deleted` 중 하나라면 `_log_event`가 `HistoryBuffer.append()`로 레코드를 남긴다.
+추적 중인 프레임에서 한 줄이 실행되면 `line` 이벤트가 라인 트레이서로 들어온다. 트레이서는 `_process_frame(frame)`을 부르고, 여기서 `_relevant_for(frame)`가 `_frame_cache`로 후보를 뽑은 뒤 `_registrations`의 등록 레코드로 확정한다. 확정된 tracker마다 도메인을 다시 해석해서 `_check_tracker`에 넘기면, 지역 변수는 `_check_and_log_local`로 프레임을 key로, 전역 변수는 `_check_and_log_global`로 `GLOBAL_STATE_KEY`를 key로, ENCLOSING 변수는 `_check_and_log_enclosing`으로 셀을 key로 보낸다. 검사 결과가 `init`, `updated`, `deleted` 중 하나라면 `_log_event`가 `HistoryBuffer.append()`로 레코드를 남긴다.
 
 `return` 이벤트에서도 정리하기 전에 `_process_frame`을 한 번 더 돌려서 마지막 줄에서 일어난 변경을 놓치지 않는다.
 

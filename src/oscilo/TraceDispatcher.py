@@ -43,6 +43,11 @@ class _Registration:
 _NO_REGISTRATION = _Registration(dedup_key=None)
 
 
+def _local_names(code):
+    # 이 code 안에서 지역(LOCAL/ENCLOSING)으로 취급되는 이름들.
+    return set(code.co_varnames) | set(code.co_cellvars) | set(code.co_freevars)
+
+
 class TraceDispatcher:
     def __init__(self, buffer=None):
         self._trackers = []
@@ -129,8 +134,22 @@ class TraceDispatcher:
 
         return event_name, new_state
 
-    def _check_and_log_enclosing(self, frame, tracker, varName):
-        cell_key = self._resolve_cell_key_cached(frame, varName)
+    def _check_tracker(self, frame, tracker, domain, is_local):
+        # 전역 이름 tracker는 이름이 co_freevars에 없을 때만 만들어지므로
+        # ENCLOSING일 수 없다. 그래서 지역 이름일 때만 ENCLOSING을 확인한다.
+        if not is_local:
+            check = self._check_and_log_global
+        elif self._is_enclosing_case(domain, tracker):
+            check = self._check_and_log_enclosing
+        else:
+            check = self._check_and_log_local
+
+        self._guarded_check_and_log(check, frame, tracker, domain)
+
+    def _check_and_log_enclosing(self, frame, tracker, domain):
+        # domain은 다른 진입점과 시그니처를 맞추려고 받기만 하고, 검사는 항상
+        # ENCLOSING으로 한다(삭제된 nonlocal이면 domain은 NOT_FOUND다).
+        cell_key = self._resolve_cell_key_cached(frame, tracker.varName)
 
         # unregister 정리를 위해 이 tracker가 건드린 cell을 기록해 둔다.
         if cell_key is not None:
@@ -152,11 +171,7 @@ class TraceDispatcher:
         resolved_domain, _ = self._resolver.resolve(frame, varName)
 
         code = frame.f_code
-        is_local = (
-            varName in code.co_varnames
-            or varName in code.co_cellvars
-            or varName in code.co_freevars
-        )
+        is_local = varName in _local_names(code)
 
         if is_local:
             dedup_key = (varName, code)
@@ -193,16 +208,7 @@ class TraceDispatcher:
         self._ensure_frame_tracking(frame)
         self._ensure_active_ancestor_tracking(frame, is_new_tracker)
 
-        if self._is_enclosing_case(resolved_domain, tracker):
-            self._guarded_check_and_log(self._check_and_log_enclosing, frame, tracker, varName)
-        elif is_local:
-            self._guarded_check_and_log(
-                self._check_and_log_local, frame, tracker, resolved_domain
-            )
-        else:
-            self._guarded_check_and_log(
-                self._check_and_log_global, frame, tracker, resolved_domain
-            )
+        self._check_tracker(frame, tracker, resolved_domain, is_local)
 
         return tracker
 
@@ -331,7 +337,7 @@ class TraceDispatcher:
         if entry is not None:
             return entry
 
-        names = set(code.co_varnames) | set(code.co_cellvars) | set(code.co_freevars)
+        names = _local_names(code)
         local_candidates = [tracker for tracker in self._trackers if tracker.varName in names]
         global_candidates = [tracker for tracker in self._trackers if tracker.varName not in names]
 
@@ -360,21 +366,11 @@ class TraceDispatcher:
 
         for tracker in local_relevant:
             domain, _ = self._resolver.resolve(frame, tracker.varName)
-
-            if self._is_enclosing_case(domain, tracker):
-                self._guarded_check_and_log(
-                    self._check_and_log_enclosing, frame, tracker, tracker.varName
-                )
-            else:
-                self._guarded_check_and_log(
-                    self._check_and_log_local, frame, tracker, domain
-                )
+            self._check_tracker(frame, tracker, domain, is_local=True)
 
         for tracker in global_relevant:
             domain, _ = self._resolver.resolve(frame, tracker.varName)
-            self._guarded_check_and_log(
-                self._check_and_log_global, frame, tracker, domain
-            )
+            self._check_tracker(frame, tracker, domain, is_local=False)
 
     def _make_line_tracer(self):
         def trace_lines(current_frame, current_event, current_arg):
