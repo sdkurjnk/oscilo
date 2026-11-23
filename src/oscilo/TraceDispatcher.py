@@ -55,6 +55,11 @@ class TraceDispatcher:
         self._bufferRef = buffer
         self._resolver = ScopeResolver()
         self._context_manager = CallContextManager()
+        self._reset_state()
+
+    def _reset_state(self):
+        # tracing 한 번 동안만 유효한 상태. __init__과 _stop_tracing이 함께 쓰므로
+        # 상태를 추가할 때 여기에만 넣으면 초기화와 정리가 모두 된다.
 
         # code 객체별 관련 tracker 캐시. 무관한 frame은 line tracing을 건너뛴다.
         # code 객체는 내용이 같으면 ==로도 같아서(같은 소스를 다시 정의한 경우 등)
@@ -257,13 +262,7 @@ class TraceDispatcher:
 
         sys.settrace(None)
         self._is_tracing = False
-        self._frame_cache.clear()
-        self._frame_states.clear()
-        self._registrations.clear()
-        self._registered.clear()
-        self._enclosing_var_ids.clear()
-        self._enclosing_cell_refs.clear()
-        self._frame_cell_cache.clear()
+        self._reset_state()
         self._context_manager.clear()
 
     def _append_buffer_event(self, varName, var_id, data, event_name, domain, line, func=None, call_id=None, parent_call_id=None, call_depth=None):

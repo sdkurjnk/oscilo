@@ -2,7 +2,7 @@
 
 `TraceDispatcher`는 여러 개의 dict와 set을 들고 있다. 이 문서는 각각이 무엇을 맡고 있고, 서로 어떻게 맞물리며, 언제 비워지는지를 정리한다.
 
-관련 코드는 `../src/oscilo/TraceDispatcher.py`의 `__init__`, `register`, `unregister`, `stop`, `_stop_tracing`, `_relevant_for`, `_check_and_log_local`/`_global`/`_enclosing`, `_log_event`와 `src/oscilo/VariableTracker.py`의 `check_owned`이다.
+관련 코드는 `../src/oscilo/TraceDispatcher.py`의 `__init__`, `_reset_state`, `register`, `unregister`, `stop`, `_stop_tracing`, `_relevant_for`, `_check_and_log_local`/`_global`/`_enclosing`, `_log_event`와 `src/oscilo/VariableTracker.py`의 `check_owned`이다.
 
 ---
 
@@ -174,7 +174,7 @@ ENCLOSING의 셀 ID는 `CallContextManager.next_id()`로 받는다. `call_id`와
 
 `stop()`은 남아 있는 모든 tracker를 `reset()`하고 `_trackers`를 비운 뒤 `_stop_tracing()`을 부른다.
 
-`_stop_tracing()`은 `sys.settrace(None)`으로 훅을 떼고, dispatcher가 들고 있는 자료구조를 모두 비운 다음 `CallContextManager.clear()`로 호출 컨텍스트도 비운다. tracker를 `reset()`하는 것은 이 함수가 아니라 `stop()`과 `unregister()`가 하는 일이다.
+`_stop_tracing()`은 `sys.settrace(None)`으로 훅을 떼고, `_reset_state()`로 dispatcher가 들고 있는 자료구조를 모두 초기값으로 되돌린 다음 `CallContextManager.clear()`로 호출 컨텍스트도 비운다. tracker를 `reset()`하는 것은 이 함수가 아니라 `stop()`과 `unregister()`가 하는 일이다. `_reset_state()`는 `__init__`에서도 부른다. 초기값과 정리 대상이 한곳에 있으므로 자료구조를 추가할 때 정리를 빠뜨리지 않는다.
 
 ---
 
