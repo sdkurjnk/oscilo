@@ -197,7 +197,7 @@ class TraceDispatcher:
             else:
                 context = self._context_manager.ensure_context(frame)
                 registration.globals_dict = frame.f_globals
-                registration.var_id = context["call_id"]
+                registration.var_id = context.call_id
 
             self._trackers.append(tracker)
             self._registrations[tracker] = registration
@@ -285,10 +285,15 @@ class TraceDispatcher:
         return domain
     
     def _log_event(self, frame, tracker, event_name, new_state, domain, cell=None):
-        # 구조상 None-안전: None frame이면 context도 None이 되고,
-        # `context or {}`와 아래 frame 가드가 각 필드를 None으로 보고한다.
-        context = self._context_manager.ensure_context(frame) or {}
-        call_id = context.get("call_id")
+        # frame이 None이면 context도 None이다. 이때 호출 관련 필드와
+        # 아래 frame 관련 필드는 모두 None으로 기록한다.
+        context = self._context_manager.ensure_context(frame)
+        if context is None:
+            call_id = parent_call_id = call_depth = None
+        else:
+            call_id = context.call_id
+            parent_call_id = context.parent_call_id
+            call_depth = context.call_depth
         registration = self._registrations.get(tracker, _NO_REGISTRATION)
 
         if domain == ENCLOSING and cell is not None:
@@ -310,8 +315,8 @@ class TraceDispatcher:
             line=frame.f_lineno if frame is not None else None,
             func=frame.f_code.co_name if frame is not None else None,
             call_id=call_id,
-            parent_call_id=context.get("parent_call_id"),
-            call_depth=context.get("call_depth"),
+            parent_call_id=parent_call_id,
+            call_depth=call_depth,
         )
 
     def _check_and_log_global(self, frame, tracker, domain):
