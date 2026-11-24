@@ -2,7 +2,7 @@
 
 이 문서는 `TraceDispatcher`가 어느 프레임에 라인 트레이서를 붙이고 어느 프레임은 그냥 두는지, 그 기준을 정리한다.
 
-관련 코드는 `../src/oscilo/TraceDispatcher.py`의 `_trace_calls`, `_ensure_frame_tracking`, `_ensure_active_ancestor_tracking`, `_make_line_tracer`, `register`이다.
+관련 코드는 `../src/oscilo/TraceDispatcher.py`의 `_trace_calls`, `_ensure_frame_tracking`, `_ensure_active_ancestor_tracking`, `_trace_lines`, `register`이다.
 
 ---
 
@@ -10,7 +10,7 @@
 
 `sys.settrace`에 걸어 둔 `_trace_calls`는 `"call"`이 아닌 이벤트가 오면 바로 `None`을 돌려준다. 전역 훅이 하는 일은 새로 시작된 프레임에 라인 트레이서를 붙일지 말지 정하는 것 하나뿐이다.
 
-이유는 속도다. 전역 훅에서 라인 이벤트까지 받으면 추적과 아무 상관 없는 코드도 한 줄 실행될 때마다 파이썬 콜백을 한 번씩 거친다. 그래서 `"call"` 시점에 `_relevant_for()`로 이 프레임이 등록된 tracker와 관련이 있는지 확인하고, 관련이 없으면 트레이서를 아예 붙이지 않는다. 관련 여부는 tracker를 등록할 때 저장해 둔 code 객체(`_tracker_codes`)와 globals dict(`_tracker_globals`)를 기준으로 판단한다.
+이유는 속도다. 전역 훅에서 라인 이벤트까지 받으면 추적과 아무 상관 없는 코드도 한 줄 실행될 때마다 파이썬 콜백을 한 번씩 거친다. 그래서 `"call"` 시점에 `_relevant_for()`로 이 프레임이 등록된 tracker와 관련이 있는지 확인하고, 관련이 없으면 트레이서를 아예 붙이지 않는다. 관련 여부는 tracker를 등록할 때 등록 레코드(`_registrations`)에 저장해 둔 code 객체와 globals dict를 기준으로 판단한다.
 
 이렇게 걸러진 프레임에서는 그 뒤로 추가 비용이 들지 않는다.
 
@@ -43,7 +43,7 @@ self._ensure_frame_tracking(frame)
 
 ### 이미 본 조상을 만나면 멈추기
 
-이미 있는 tracker를 다시 쓰는 등록, 즉 `is_new_tracker`가 `False`인 경우에는 올라가다가 `_frame_states`에 이미 들어 있는 조상을 만나면 거기서 바로 멈춘다.
+이미 있는 tracker를 다시 쓰는 등록, 즉 `is_new_tracker`가 `False`인 경우에는 올라가다가 `_tracked_frames`에 이미 들어 있는 조상을 만나면 거기서 바로 멈춘다.
 
 그 조상에는 앞선 등록에서 이미 트레이서가 붙었고, 트레이서는 line이나 return 이벤트가 올 때마다 `_relevant_for()`로 관련 tracker를 다시 걸러낸다. 따라서 그보다 위쪽은 이전 등록 때 이미 처리됐다고 볼 수 있다.
 
@@ -51,17 +51,19 @@ self._ensure_frame_tracking(frame)
 
 이 지름길이 없으면 재귀에서 문제가 된다. 재귀 함수가 깊이마다 같은 변수를 `register()`하면 각 등록이 매번 조상 체인 전체를 훑게 되고, 전체 비용이 재귀 깊이의 제곱에 가깝게 늘어난다.
 
-## 트레이서는 프레임마다 따로 만든다
+## 트레이서는 모든 프레임이 함께 쓴다
 
-`_ensure_frame_tracking`은 `_make_line_tracer()`로 새 트레이서를 만들어 프레임의 `f_trace`에 붙이고, 붙인 프레임을 `_frame_states`에 표시해 둔다. 같은 프레임에 다시 요청이 오면 이미 붙어 있으므로 아무것도 하지 않는다.
+`_ensure_frame_tracking`은 dispatcher의 메서드인 `_trace_lines`를 프레임의 `f_trace`에 붙이고, 붙인 프레임을 `_tracked_frames`에 표시해 둔다. 같은 프레임에 다시 요청이 오면 이미 붙어 있으므로 아무것도 하지 않는다.
 
-변수의 이전 값은 트레이서가 아니라 `VariableTracker`가 들고 있다. LOCAL 변수는 프레임을 key로 저장되기 때문에, 재귀로 같은 code 객체의 프레임이 여러 개 동시에 살아 있어도 호출마다 상태가 따로 관리된다. code 객체를 key로 썼다면 재귀 호출들이 서로의 이전 값을 덮어썼을 것이다.
+트레이서를 붙일 때 `f_trace_lines`도 `True`로 켠다. 호출 트리를 잇기 위해 만든 중간 프레임에는 [호출 컨텍스트 트리](CallContext.md)의 정리용 트레이서가 붙어 라인 이벤트가 꺼져 있다. 이런 프레임이 나중에 추적 대상이 되었을 때 트레이서만 바꾸면 `return`에서야 처음 불려서, 마지막 값만 기록되고 그 사이의 변경은 빠진다.
+
+트레이서 하나를 여러 프레임이 함께 써도 되는 것은 트레이서가 프레임별 상태를 갖지 않기 때문이다. 변수의 이전 값은 트레이서가 아니라 `VariableTracker`가 들고 있다. LOCAL 변수는 프레임을 key로 저장되기 때문에, 재귀로 같은 code 객체의 프레임이 여러 개 동시에 살아 있어도 호출마다 상태가 따로 관리된다. code 객체를 key로 썼다면 재귀 호출들이 서로의 이전 값을 덮어썼을 것이다.
 
 ## 언제 정리하나
 
 라인 트레이서는 매번 자기 자신을 돌려줘서 다음 이벤트에도 계속 불린다. `return` 이벤트가 와도 먼저 `_process_frame()`으로 값을 한 번 더 검사하므로 마지막 줄에서 일어난 변경을 놓치지 않는다.
 
-그다음 프레임이 진짜로 끝난 경우라면 정리를 한다. 먼저 `on_return`으로 호출 컨텍스트를 지우고, 그 프레임의 LOCAL 상태를 tracker에서 지운 뒤, `_frame_states`와 `_frame_cell_cache`에서 그 프레임을 뺀다. 마지막으로 `None`을 돌려줘서 트레이서를 뗀다. 모두 프레임을 key로 쓰는 자료구조라서 이 정리를 빼먹으면 상태가 프레임보다 오래 남아 메모리가 샌다.
+그다음 프레임이 진짜로 끝난 경우라면 `_on_frame_exit()`으로 정리를 한다. 먼저 `on_return`으로 호출 컨텍스트를 지우고, 그 프레임의 LOCAL 상태를 tracker에서 지운 뒤, `_tracked_frames`와 `_frame_cell_cache`에서 그 프레임을 뺀다. 마지막으로 `None`을 돌려줘서 트레이서를 뗀다. 모두 프레임을 key로 쓰는 자료구조라서 이 정리를 빼먹으면 상태가 프레임보다 오래 남아 메모리가 샌다.
 
 ENCLOSING 상태는 예외다. 클로저는 자기를 정의한 프레임이 끝난 뒤에도 호출될 수 있으므로, ENCLOSING 상태는 프레임이 끝나도 지우지 않고 `unregister()`나 `stop()` 때 정리한다.
 

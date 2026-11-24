@@ -60,7 +60,7 @@ C 함수 호출에도 비용이 들기 때문에, `VariableTracker.evaluate`는 
 
 이슈 #52에서는 같은 원칙을 `deepcopy` 실패 외의 경우로 넓혔다. 4단계 값 비교(`PyObject_RichCompareBool`)에서 추적 중인 값의 `__eq__`나 `__ne__`가 예외를 던지면 결과로 `-1`이 반환된다. 이 예외는 `TraceDispatcher`의 check-and-log 경로(`_check_and_log_local`, `_check_and_log_global`, `_check_and_log_enclosing`)를 거쳐 `sys.settrace` 콜백 밖, 즉 사용자 코드로 그대로 전파될 수 있었다.
 
-지금은 `_guarded_check_and_log`가 `register()`와 `_process_frame()`에서 하는 모든 check-and-log 호출을 트래커와 이벤트 단위로 감싼다. 그래서 한 트래커의 비교가 계속 실패해도 다른 트래커와 이후 이벤트에는 영향이 없다.
+지금은 `_guarded_check_and_log`가 모든 check-and-log 호출을 트래커와 이벤트 단위로 감싼다. `register()`와 `_process_frame()`은 모두 `_check_tracker`를 거쳐 검사하고, 감싸는 일은 `_check_tracker`가 한다. 그래서 한 트래커의 비교가 계속 실패해도 다른 트래커와 이후 이벤트에는 영향이 없다.
 
 저장할 때도 같은 원칙을 적용한다. `deepcopy`는 되지만 JSON으로 직렬화할 수 없는 값(일반 사용자 정의 객체 등)이 `data` 필드에 있으면, 예전에는 `HistoryBuffer.write`의 `json.dumps` 호출이 실패했다. 이 호출은 `atexit` 훅 안에서 실행되어 예외가 드러나지 않았고, 그 실행의 로그 파일 전체가 0바이트로 남았다.
 
