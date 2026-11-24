@@ -1,4 +1,5 @@
 import dis
+from dataclasses import dataclass
 
 
 _YIELD_VALUE_OPCODE = dis.opmap["YIELD_VALUE"]
@@ -23,6 +24,14 @@ def is_suspended_return(frame):
         and bytecode[offset] == _YIELD_VALUE_OPCODE
         for offset in candidate_offsets
     )
+
+
+@dataclass(frozen=True, slots=True)
+class CallContext:
+    # 이벤트가 일어난 호출 하나를 나타낸다. 만든 뒤에는 바꾸지 않는다.
+    call_id: int
+    parent_call_id: int | None
+    call_depth: int
 
 
 class CallContextManager:
@@ -87,7 +96,9 @@ class CallContextManager:
         return self._contexts[frame]
 
     def on_return(self, frame):
-        if frame is None or is_suspended_return(frame):
+        # frame이 진짜로 끝났을 때만 부른다. yield로 멈춘 것인지는 호출하는
+        # tracer가 is_suspended_return()으로 먼저 가려낸다.
+        if frame is None:
             return
 
         self._contexts.pop(frame, None)
@@ -105,16 +116,15 @@ class CallContextManager:
         call_depth = 1
 
         if parent_context is not None:
-            parent_call_id = parent_context["call_id"]
-            call_depth = parent_context["call_depth"] + 1
+            parent_call_id = parent_context.call_id
+            call_depth = parent_context.call_depth + 1
 
-        context = {
-            "call_id": self._next_call_id,
-            "parent_call_id": parent_call_id,
-            "call_depth": call_depth,
-        }
+        context = CallContext(
+            call_id=self.next_id(),
+            parent_call_id=parent_call_id,
+            call_depth=call_depth,
+        )
 
-        self._next_call_id += 1
         self._contexts[frame] = context
 
         return context
@@ -125,8 +135,7 @@ class CallContextManager:
 
         # 이미 local tracer가 있는 frame은 relevant한 frame으로 간주된다. 그
         # 정상 return 경로가 on_return()을 호출해야 하므로 그 tracer를 대체하지 않는다.
-        previous_trace = getattr(frame, "f_trace", None)
-        if previous_trace is not None:
+        if getattr(frame, "f_trace", None) is not None:
             return
 
         previous_trace_lines = getattr(
@@ -150,7 +159,6 @@ class CallContextManager:
 
         self._cleanup_traces[frame] = {
             "installed_trace": cleanup_trace,
-            "previous_trace": previous_trace,
             "previous_trace_lines": previous_trace_lines,
         }
 
@@ -165,8 +173,10 @@ class CallContextManager:
 
         installed_trace = cleanup_state["installed_trace"]
 
+        # 정리용 tracer는 f_trace가 비어 있던 frame에만 붙으므로 되돌릴 값은 None이다.
+        # 그 사이 다른 tracer로 바뀌었다면 건드리지 않는다.
         if getattr(frame, "f_trace", None) is installed_trace:
-            frame.f_trace = cleanup_state["previous_trace"]
+            frame.f_trace = None
 
         frame.f_trace_lines = cleanup_state[
             "previous_trace_lines"

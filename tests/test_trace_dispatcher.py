@@ -60,7 +60,7 @@ class TestTraceDispatcherFrameRelevance(unittest.TestCase):
             register_global()
 
             ancestor_tracking.append(
-                sys._getframe() in self.dispatcher._frame_states
+                sys._getframe() in self.dispatcher._tracked_frames
             )
             self.assertEqual(
                 MODULE_LEVEL_COUNTER,
@@ -99,10 +99,10 @@ class TestTraceDispatcherFrameRelevance(unittest.TestCase):
             "def _nested_caller():\n"
             "    _boundary_test_register()\n"
             "    _boundary_test_tracked['nested_caller'] = ("
-            "sys._getframe() in _boundary_test_dispatcher._frame_states)\n"
+            "sys._getframe() in _boundary_test_dispatcher._tracked_frames)\n"
             "_nested_caller()\n"
             "_boundary_test_tracked['module'] = ("
-            "sys._getframe() in _boundary_test_dispatcher._frame_states)\n"
+            "sys._getframe() in _boundary_test_dispatcher._tracked_frames)\n"
         )
 
         try:
@@ -112,7 +112,7 @@ class TestTraceDispatcherFrameRelevance(unittest.TestCase):
             del exec_globals["_boundary_test_tracked"]
             del exec_globals["_boundary_test_dispatcher"]
 
-        caller_tracked = sys._getframe() in self.dispatcher._frame_states
+        caller_tracked = sys._getframe() in self.dispatcher._tracked_frames
 
         self.assertTrue(tracked["nested_caller"])
         self.assertTrue(tracked["module"])
@@ -254,7 +254,7 @@ class TestTraceDispatcherConsecutiveRegistration(unittest.TestCase):
         self.dispatcher.register("first", frame=frame)
         self.dispatcher.register("second", frame=frame)
 
-        self.assertEqual(len(self.dispatcher._frame_states), 1)
+        self.assertEqual(len(self.dispatcher._tracked_frames), 1)
 
         first.append(2)
         second = "beta"
@@ -427,10 +427,10 @@ class TestTraceDispatcherStopCleanup(unittest.TestCase):
 
         self.assertEqual(self.dispatcher._context_manager._contexts, {})
         self.assertEqual(self.dispatcher._context_manager._cleanup_traces, {})
-        self.assertEqual(self.dispatcher._frame_states, {})
+        self.assertEqual(self.dispatcher._tracked_frames, set())
         self.assertEqual(self.dispatcher._trackers, [])
 
-    def test_active_ancestor_states_are_isolated_and_removed_on_return(self):
+    def test_active_ancestor_frames_are_tracked_and_removed_on_return(self):
         global MODULE_LEVEL_COUNTER
         MODULE_LEVEL_COUNTER = {"value": 0}
         returned_frames = []
@@ -449,15 +449,11 @@ class TestTraceDispatcherStopCleanup(unittest.TestCase):
 
             self.assertIn(
                 outer_frame,
-                self.dispatcher._frame_states,
+                self.dispatcher._tracked_frames,
             )
             self.assertIn(
                 parent_frame,
-                self.dispatcher._frame_states,
-            )
-            self.assertIsNot(
-                self.dispatcher._frame_states[outer_frame],
-                self.dispatcher._frame_states[parent_frame],
+                self.dispatcher._tracked_frames,
             )
 
             returned_frames.append(outer_frame)
@@ -466,11 +462,11 @@ class TestTraceDispatcherStopCleanup(unittest.TestCase):
 
         self.assertNotIn(
             returned_frames[0],
-            self.dispatcher._frame_states,
+            self.dispatcher._tracked_frames,
         )
         self.assertIn(
             sys._getframe(),
-            self.dispatcher._frame_states,
+            self.dispatcher._tracked_frames,
         )
 
     def test_stop_clears_active_ancestor_frame_state(self):
@@ -489,25 +485,194 @@ class TestTraceDispatcherStopCleanup(unittest.TestCase):
 
         self.assertIn(
             active_ancestor,
-            self.dispatcher._frame_states,
+            self.dispatcher._tracked_frames,
         )
 
         self.dispatcher.stop()
 
         self.assertNotIn(
             active_ancestor,
-            self.dispatcher._frame_states,
+            self.dispatcher._tracked_frames,
         )
         self.assertEqual(
-            self.dispatcher._frame_states,
-            {},
+            self.dispatcher._tracked_frames,
+            set(),
         )
+
+
+class TestTraceDispatcherFrameExit(unittest.TestCase):
+    """Which tracker states survive the frame that produced them."""
+
+    def setUp(self):
+        self.dispatcher = TraceDispatcher(HistoryBuffer())
+
+    def tearDown(self):
+        self.dispatcher.stop()
+
+    def test_local_states_are_forgotten_on_return(self):
+        def plain():
+            x = 1
+            tracker = self.dispatcher.register("x", frame=sys._getframe())
+            x = 2
+            return tracker
+
+        def captured():
+            x = 1
+            tracker = self.dispatcher.register("x", frame=sys._getframe())
+            x = 2
+            return tracker, lambda: x
+
+        self.assertEqual(plain()._states, {})
+        self.assertEqual(captured()[0]._states, {})
+
+    def test_enclosing_frame_fallback_state_is_kept_on_return(self):
+        def make():
+            x = 1
+
+            def inner():
+                nonlocal x
+                tracker = self.dispatcher.register("x", frame=sys._getframe())
+                x += 1
+                return tracker
+
+            return inner
+
+        # Never bound to a name, so the owning cell cannot be resolved and
+        # the state is keyed by the frame.
+        tracker = make()()
+
+        self.assertEqual(len(tracker._states), 1)
+
+    def test_name_both_free_and_cell_is_forgotten_as_local(self):
+        def make():
+            x = 1
+
+            def inner():
+                tracker = self.dispatcher.register("x", frame=sys._getframe())
+                closures = [lambda: x for x in range(2)]
+                return tracker, closures, x
+
+            return inner
+
+        inner = make()
+        code = inner.__code__
+
+        # An inlined comprehension (3.12+) can make one name both a cell and
+        # a free variable; resolve() then treats it as LOCAL.
+        if not ("x" in code.co_cellvars and "x" in code.co_freevars):
+            self.skipTest("comprehension is not inlined on this version")
+
+        self.assertEqual(inner()[0]._states, {})
+
+
+class TestTraceDispatcherGapFrameTracking(unittest.TestCase):
+    """A gap frame (context only, return-only cleanup tracer, line events
+    off) must get its line events back once it becomes a tracked frame.
+    """
+
+    def setUp(self):
+        self.buffer = HistoryBuffer()
+        self.dispatcher = TraceDispatcher(self.buffer)
+
+    def tearDown(self):
+        self.dispatcher.stop()
+
+    def _log_from_leaf(self):
+        # Logging from here makes the untracked caller a gap frame.
+        leaf_value = 1
+        self.dispatcher.register("leaf_value", frame=sys._getframe())
+        return leaf_value
+
+    def test_registering_in_gap_frame_records_every_line(self):
+        def gap():
+            frame = sys._getframe()
+            g = 0
+            self._log_from_leaf()
+            self.assertFalse(frame.f_trace_lines)
+
+            self.dispatcher.register("g", frame=frame)
+            g = 10
+            g = 20
+            return g
+
+        def root():
+            r = 0
+            self.dispatcher.register("r", frame=sys._getframe())
+            gap()
+            return r
+
+        root()
+
+        self.assertEqual(
+            events_for(self.buffer.getHistory(), "g"),
+            [("init", 0), ("updated", 10), ("updated", 20)],
+        )
+
+    def test_gap_frame_tracked_as_ancestor_records_every_line(self):
+        global MODULE_LEVEL_COUNTER
+        MODULE_LEVEL_COUNTER = 0
+
+        def register_global():
+            self.dispatcher.register(
+                "MODULE_LEVEL_COUNTER",
+                frame=sys._getframe(),
+            )
+
+        def gap():
+            global MODULE_LEVEL_COUNTER
+            frame = sys._getframe()
+            self._log_from_leaf()
+            self.assertFalse(frame.f_trace_lines)
+
+            # A new tracker makes this already-running frame relevant.
+            register_global()
+            MODULE_LEVEL_COUNTER = 10
+            MODULE_LEVEL_COUNTER = 20
+            return frame
+
+        def root():
+            r = 0
+            self.dispatcher.register("r", frame=sys._getframe())
+            gap()
+            return r
+
+        root()
+
+        self.assertEqual(
+            events_for(self.buffer.getHistory(), "MODULE_LEVEL_COUNTER"),
+            [("init", 0), ("updated", 10), ("updated", 20)],
+        )
+
+    def test_gap_frame_cleanup_still_runs_after_it_becomes_tracked(self):
+        frames = []
+
+        def gap():
+            frame = sys._getframe()
+            frames.append(frame)
+            g = 0
+            self._log_from_leaf()
+            self.dispatcher.register("g", frame=frame)
+            return g
+
+        def root():
+            r = 0
+            self.dispatcher.register("r", frame=sys._getframe())
+            gap()
+            return r
+
+        root()
+
+        manager = self.dispatcher._context_manager
+        self.assertNotIn(frames[0], manager._contexts)
+        self.assertNotIn(frames[0], manager._cleanup_traces)
+        self.assertNotIn(frames[0], self.dispatcher._tracked_frames)
+        self.assertTrue(frames[0].f_trace_lines)
 
 
 class TestTraceDispatcherAncestorEarlyExit(unittest.TestCase):
     """Covers the register() ancestor-walk early exit (issue #59): a dedup
     registration (is_new_tracker=False) must stop climbing frame.f_back as
-    soon as it reaches a frame already present in _frame_states, instead of
+    soon as it reaches a frame already present in _tracked_frames, instead of
     re-walking ancestors an earlier registration already tracked. A new
     tracker (is_new_tracker=True) must never take this shortcut, since it
     can change relevance for the whole frame_cache.
@@ -555,7 +720,7 @@ class TestTraceDispatcherAncestorEarlyExit(unittest.TestCase):
             self.dispatcher.register("acc", frame=frame)
             if n < 5:
                 parent = frame.f_back
-                self.assertIn(parent, self.dispatcher._frame_states)
+                self.assertIn(parent, self.dispatcher._tracked_frames)
                 depths_checked.append(counts.get(id(parent), 0))
             if n > 1:
                 recurse(n - 1)
@@ -581,7 +746,7 @@ class TestTraceDispatcherAncestorEarlyExit(unittest.TestCase):
             self.dispatcher.register("MODULE_LEVEL_COUNTER", frame=frame)
             if n < 4:
                 parent = frame.f_back
-                self.assertIn(parent, self.dispatcher._frame_states)
+                self.assertIn(parent, self.dispatcher._tracked_frames)
                 depths_checked.append(counts.get(id(parent), 0))
             if n > 1:
                 recurse(n - 1)
@@ -613,7 +778,7 @@ class TestTraceDispatcherAncestorEarlyExit(unittest.TestCase):
         wrapper(depth)
 
         # wrapper() declares no tracked variable and is a brand-new frame
-        # object on every call, so it can never already be in _frame_states;
+        # object on every call, so it can never already be in _tracked_frames;
         # the ancestor walk must therefore evaluate its relevance exactly
         # once (never skip it, or relevance would silently go unchecked).
         for frame in wrapper_frames:
@@ -622,7 +787,7 @@ class TestTraceDispatcherAncestorEarlyExit(unittest.TestCase):
         # recurse_body() tracks its own frame before recursing further, so
         # no deeper registration's ancestor walk should ever re-examine it.
         for frame in recurse_body_frames:
-            self.assertIn(frame, self.dispatcher._frame_states)
+            self.assertIn(frame, self.dispatcher._tracked_frames)
             self.assertEqual(counts.get(id(frame), 0), 0)
 
     def test_new_tracker_mid_recursion_does_not_early_exit(self):
@@ -635,7 +800,7 @@ class TestTraceDispatcherAncestorEarlyExit(unittest.TestCase):
             self.dispatcher.register("a", frame=frame)
             if n == 2:
                 parent = frame.f_back
-                self.assertIn(parent, self.dispatcher._frame_states)
+                self.assertIn(parent, self.dispatcher._tracked_frames)
 
                 # "b" has never been registered anywhere, so this is a
                 # brand-new tracker (is_new_tracker=True). Even though the
@@ -666,13 +831,13 @@ class TestTraceDispatcherAncestorEarlyExit(unittest.TestCase):
                 self.dispatcher.unregister(tracker1)
 
                 dedup_key = ("x", frame.f_code)
-                self.assertNotIn(dedup_key, self.dispatcher._registered_local)
+                self.assertNotIn(dedup_key, self.dispatcher._registered)
 
                 self._freeze_global_trace()
                 counts = self._count_relevant_for_calls()
 
                 parent = frame.f_back
-                self.assertIn(parent, self.dispatcher._frame_states)
+                self.assertIn(parent, self.dispatcher._tracked_frames)
 
                 tracker2 = self.dispatcher.register("x", frame=frame)
 
