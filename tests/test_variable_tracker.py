@@ -423,7 +423,10 @@ class TestVariableTrackerState(unittest.TestCase):
         state = self.tracker._make_state(value)
 
         self.assertIs(state["ref"], value)
-        self.assertIsNone(state["copy"])
+        # deepcopy fails, but a dict keeps a shallow copy as its baseline (#108).
+        self.assertEqual(state["copy"], value)
+        self.assertIsNot(state["copy"], value)
+        self.assertIs(state["copy"]["a"], value["a"])
         self.assertTrue(state["copy_failed"])
 
     def test_make_state_success_and_atomic_paths_set_copy_failed_false(self):
@@ -474,6 +477,48 @@ class TestVariableTrackerState(unittest.TestCase):
                 state,
             )
             self.assertEqual(event_name, NO_CHANGE_EVENT)
+
+    def test_uncopyable_builtin_container_detects_in_place_change(self):
+        # Issue #108: deepcopy fails because of the lock inside, but list,
+        # dict and set can still be compared through a shallow copy.
+        cases = [
+            ("list", lambda: [threading.Lock()], lambda value: value.append(1)),
+            ("dict", lambda: {"lock": threading.Lock()}, lambda value: value.update(extra=1)),
+            ("set", lambda: {threading.Lock()}, lambda value: value.add(1)),
+        ]
+
+        for label, make_value, mutate in cases:
+            with self.subTest(label):
+                tracker = VariableTracker("target")
+                target = make_value()
+                frame = sys._getframe()
+
+                event_name, state = tracker.evaluate(frame, LOCAL, "target", None)
+                self.assertEqual(event_name, INIT_EVENT)
+                self.assertTrue(state["copy_failed"])
+
+                event_name, state = tracker.evaluate(frame, LOCAL, "target", state)
+                self.assertEqual(event_name, NO_CHANGE_EVENT)
+
+                mutate(target)
+                event_name, state = tracker.evaluate(frame, LOCAL, "target", state)
+                self.assertEqual(event_name, UPDATED_EVENT)
+                self.assertIs(state["ref"], target)
+
+                event_name, state = tracker.evaluate(frame, LOCAL, "target", state)
+                self.assertEqual(event_name, NO_CHANGE_EVENT)
+
+    def test_uncopyable_container_still_misses_nested_in_place_change(self):
+        # Known limit of the shallow fallback: inner objects are shared with
+        # the original, so changing them in place is not visible.
+        target = {"items": [threading.Lock()]}
+        frame = sys._getframe()
+
+        _, state = self.tracker.evaluate(frame, LOCAL, "target", None)
+        target["items"].append(1)
+        event_name, _ = self.tracker.evaluate(frame, LOCAL, "target", state)
+
+        self.assertEqual(event_name, NO_CHANGE_EVENT)
 
     def test_check_transitions_from_copy_failure_state_on_reassignment(self):
         target = threading.Lock()

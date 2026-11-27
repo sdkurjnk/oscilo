@@ -1,4 +1,5 @@
 import sys
+import threading
 import unittest
 
 from oscilo.HistoryBuffer import HistoryBuffer
@@ -851,6 +852,32 @@ class TestTraceDispatcherAncestorEarlyExit(unittest.TestCase):
             inner()
 
         outer()
+
+
+class TestTraceDispatcherUncopyableValues(unittest.TestCase):
+    def setUp(self):
+        self.buffer = HistoryBuffer()
+        self.dispatcher = TraceDispatcher(self.buffer)
+
+    def tearDown(self):
+        self.dispatcher.stop()
+
+    def test_in_place_change_of_uncopyable_list_is_recorded(self):
+        # Issue #108: a list holding a lock cannot be deep-copied, but
+        # appending to it must still be recorded as an update.
+        def run():
+            items = [threading.Lock()]
+            self.dispatcher.register("items", frame=sys._getframe())
+            items.append(1)
+            items.append(2)
+            return items
+
+        run()
+
+        self.assertEqual(
+            [event for event, _ in events_for(self.buffer.getHistory(), "items")],
+            ["init", "updated", "updated"],
+        )
 
 
 if __name__ == "__main__":

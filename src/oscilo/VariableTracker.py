@@ -24,6 +24,9 @@ _FRAME_STATE_ATOMIC_TYPES = (
     type(None),
 )
 
+# deepcopy가 실패해도 바깥 컨테이너만 복사해 비교 기준으로 쓸 수 있는 타입.
+_SHALLOW_SNAPSHOT_TYPES = (list, dict, set)
+
 
 class VariableTracker:
     def __init__(self, varName, domain=None):
@@ -44,8 +47,9 @@ class VariableTracker:
                 snapshot = copy.deepcopy(value)
             except Exception:
                 # 전부 deepcopy 되진 않는다(lock·socket·file handle 등).
-                # 트레이스 콜백 밖으로 예외를 흘리지 말고 identity-only 비교로 폴백한다.
-                snapshot = None
+                # 트레이스 콜백 밖으로 예외를 흘리지 말고 얕은 사본으로 폴백한다.
+                # 얕은 사본도 만들 수 없는 값은 identity-only 비교로 남는다.
+                snapshot = self._make_shallow_snapshot(value)
                 copy_failed = True
 
         return {
@@ -53,6 +57,15 @@ class VariableTracker:
             "copy": snapshot,
             "copy_failed": copy_failed,
         }
+
+    def _make_shallow_snapshot(self, value):
+        # 내장 list·dict·set은 바깥 컨테이너만 복사해도 원소 추가·삭제·교체를
+        # 비교할 수 있다. 원소 객체는 원본과 공유하므로 원소 안쪽의 제자리 변경은
+        # 잡지 못한다. 그 밖의 값은 None을 돌려 identity-only 비교로 남긴다.
+        if type(value) not in _SHALLOW_SNAPSHOT_TYPES:
+            return None
+
+        return value.copy()
 
     def _get_current_value(self, frame, domain, varName):
         if domain == LOCAL or domain == ENCLOSING:
@@ -67,12 +80,12 @@ class VariableTracker:
         if state is None:
             return None
 
-        if state["copy"] is None:
-            if state["copy_failed"]:
-                # 참조 자체를 복사 못 했으니 raw로 넘기면 위험하다(lock이 HistoryBuffer/json.dumps로).
-                # JSON 직렬화 가능한 placeholder로 폴백.
-                return _SNAPSHOT_COPY_FAILED
+        if state["copy_failed"]:
+            # 깊은 사본이 없는 값이다. 참조나 얕은 사본을 그대로 넘기면 위험하므로
+            # (lock이 HistoryBuffer/json.dumps로) JSON 직렬화 가능한 placeholder로 대신한다.
+            return _SNAPSHOT_COPY_FAILED
 
+        if state["copy"] is None:
             return state["ref"]
 
         # 저장된 가변 스냅샷을 호출자에게 직접 노출하지 않는다.
@@ -139,8 +152,10 @@ class VariableTracker:
         previous_ref = prev_state["ref"]
         previous_copy = prev_state["copy"]
 
-        # previous_copy가 None인 경우: atomic이라 스냅샷이 필요 없었거나 (identity 비교 안전), deepcopy 실패로 identity-only로 강등된 경우.
-        # 후자는 값이 실제로 가변일 수 있어, 재할당 없는 제자리 변경은 못 잡는다.
+        # previous_copy가 None인 경우: atomic이라 스냅샷이 필요 없었거나(identity 비교로 충분),
+        # deepcopy도 얕은 사본도 만들 수 없어 identity-only로 남은 경우다.
+        # 후자는 재할당 없는 제자리 변경을 잡지 못한다. 내장 list·dict·set은 얕은 사본이
+        # 있으므로 이 분기로 오지 않고 아래 oscilo_engine 비교를 탄다.
         if previous_copy is None:
             if current_value is previous_ref:
                 return NO_CHANGE_EVENT, prev_state
